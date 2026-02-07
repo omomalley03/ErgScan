@@ -11,6 +11,7 @@ class ScannerViewModel: ObservableObject {
 
     @Published var capturedImage: UIImage?
     @Published var debugResults: [GuideRelativeOCRResult] = []
+    @Published var parsedTable: RecognizedTable?
     @Published var isProcessing = false
     @Published var errorMessage: String?
 
@@ -18,6 +19,7 @@ class ScannerViewModel: ObservableObject {
 
     let cameraService = CameraService()
     private let visionService = VisionService()
+    private let tableParser = TableParserService()
     private var cancellables = Set<AnyCancellable>()
 
     init() {
@@ -105,6 +107,9 @@ class ScannerViewModel: ObservableObject {
                 )
             }
 
+            // Run the parser on the guide-relative results
+            parsedTable = tableParser.parseTable(from: debugResults)
+
         } catch {
             errorMessage = "OCR error: \(error.localizedDescription)"
         }
@@ -115,5 +120,6 @@ class ScannerViewModel: ObservableObject {
     func retake() {
         capturedImage = nil
         debugResults = []
+        parsedTable = nil
     }
 }

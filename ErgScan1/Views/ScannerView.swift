@@ -37,9 +37,9 @@ struct ScannerView: View {
             .frame(maxHeight: .infinity)
             .clipped()
 
-            // ---- BOTTOM HALF: Debug OCR results ----
+            // ---- BOTTOM HALF: Parsed table display ----
             VStack(spacing: 0) {
-                if viewModel.debugResults.isEmpty && viewModel.capturedImage == nil {
+                if viewModel.parsedTable == nil && viewModel.capturedImage == nil {
                     VStack(spacing: 8) {
                         Image(systemName: "doc.text.viewfinder")
                             .font(.system(size: 36))
@@ -49,76 +49,13 @@ struct ScannerView: View {
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if viewModel.debugResults.isEmpty && viewModel.capturedImage != nil {
-                    Text("No text detected inside guide")
+                } else if let table = viewModel.parsedTable {
+                    ParsedTableDisplayView(table: table)
+                } else {
+                    Text("No data parsed")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    // Header — X = left-to-right, Y = top-to-bottom (guide-relative, top-left origin)
-                    HStack {
-                        Text("Text")
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Text("Conf")
-                            .frame(width: 45, alignment: .trailing)
-                        Text("X")
-                            .frame(width: 45, alignment: .trailing)
-                        Text("Y")
-                            .frame(width: 45, alignment: .trailing)
-                    }
-                    .font(.caption2)
-                    .fontWeight(.semibold)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
-                    .background(Color(.secondarySystemBackground))
-
-                    // Results list sorted by Y (top-to-bottom)
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            ForEach(
-                                Array(viewModel.debugResults
-                                    .sorted {
-                                        if abs($0.guideRelativeBox.midY - $1.guideRelativeBox.midY) < 0.03 {
-                                            return $0.guideRelativeBox.midX < $1.guideRelativeBox.midX
-                                        }
-                                        return $0.guideRelativeBox.midY < $1.guideRelativeBox.midY
-                                    }
-                                    .enumerated()),
-                                id: \.offset
-                            ) { _, result in
-                                HStack {
-                                    Text(result.text)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .lineLimit(1)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                    Text(String(format: "%.0f%%", result.confidence * 100))
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundColor(confidenceColor(result.confidence))
-                                        .frame(width: 45, alignment: .trailing)
-                                    Text(String(format: "%.2f", result.guideRelativeBox.midX))
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 45, alignment: .trailing)
-                                    Text(String(format: "%.2f", result.guideRelativeBox.midY))
-                                        .font(.system(.caption2, design: .monospaced))
-                                        .foregroundColor(.secondary)
-                                        .frame(width: 45, alignment: .trailing)
-                                }
-                                .padding(.horizontal)
-                                .padding(.vertical, 4)
-
-                                Divider()
-                            }
-                        }
-                    }
-                    .frame(maxHeight: .infinity)
-
-                    // Result count
-                    Text("\(viewModel.debugResults.count) results inside guide")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                        .padding(.vertical, 4)
                 }
 
                 // Bottom controls
@@ -169,12 +106,6 @@ struct ScannerView: View {
         } message: {
             Text(viewModel.errorMessage ?? "")
         }
-    }
-
-    private func confidenceColor(_ confidence: Float) -> Color {
-        if confidence > 0.8 { return .green }
-        if confidence > 0.5 { return .orange }
-        return .red
     }
 }
 
