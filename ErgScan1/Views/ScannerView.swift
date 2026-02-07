@@ -78,7 +78,12 @@ struct ScannerView: View {
                         LazyVStack(spacing: 0) {
                             ForEach(
                                 Array(viewModel.debugResults
-                                    .sorted { $0.guideRelativeBox.midY < $1.guideRelativeBox.midY }
+                                    .sorted {
+                                        if abs($0.guideRelativeBox.midY - $1.guideRelativeBox.midY) < 0.03 {
+                                            return $0.guideRelativeBox.midX < $1.guideRelativeBox.midX
+                                        }
+                                        return $0.guideRelativeBox.midY < $1.guideRelativeBox.midY
+                                    }
                                     .enumerated()),
                                 id: \.offset
                             ) { _, result in

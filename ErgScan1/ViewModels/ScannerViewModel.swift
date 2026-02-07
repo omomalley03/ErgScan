@@ -18,6 +18,17 @@ class ScannerViewModel: ObservableObject {
 
     let cameraService = CameraService()
     private let visionService = VisionService()
+    private var cancellables = Set<AnyCancellable>()
+
+    init() {
+        // Forward cameraService changes so the view re-renders
+        // when isSessionRunning changes
+        cameraService.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
+    }
 
     // MARK: - Camera Setup
 
