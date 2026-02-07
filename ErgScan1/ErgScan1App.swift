@@ -12,7 +12,8 @@ import SwiftData
 struct ErgScan1App: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Workout.self,
+            Interval.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
