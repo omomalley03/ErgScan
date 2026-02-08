@@ -74,3 +74,65 @@ struct TableRow {
         self.boundingBox = boundingBox
     }
 }
+
+// MARK: - Completeness Detection
+
+extension RecognizedTable {
+    /// Whether the workout data meets the minimum threshold for locking (70%+ AND workoutType identified)
+    var isComplete: Bool {
+        // Must have workout type identified to lock
+        guard workoutType != nil else { return false }
+        return completenessScore >= 0.7
+    }
+
+    /// Completeness score from 0.0 to 1.0 based on which fields are present
+    var completenessScore: Double {
+        var score = 0.0
+        var maxScore = 0.0
+
+        // Metadata (30 points)
+        maxScore += 30
+        if workoutType != nil { score += 10 }
+        if description != nil { score += 10 }
+        if date != nil { score += 10 }
+
+        // Averages row (40 points)
+        maxScore += 40
+        if let avg = averages {
+            if avg.time != nil { score += 10 }
+            if avg.meters != nil { score += 10 }
+            if avg.splitPer500m != nil { score += 10 }
+            if avg.strokeRate != nil { score += 10 }
+        }
+
+        // Data rows (20 points)
+        maxScore += 20
+        if !rows.isEmpty { score += 20 }
+
+        // Confidence (10 points)
+        maxScore += 10
+        score += averageConfidence * 10
+
+        return score / maxScore
+    }
+
+    /// Hash of essential fields for stability detection
+    /// Only includes key fields to avoid minor confidence fluctuations triggering changes
+    var stableHash: Int {
+        var hasher = Hasher()
+
+        // Hash workout type
+        hasher.combine(workoutType)
+
+        // Hash averages key fields
+        if let avg = averages {
+            hasher.combine(avg.time?.text)
+            hasher.combine(avg.meters?.text)
+        }
+
+        // Hash row count (not individual row values to avoid confidence fluctuations)
+        hasher.combine(rows.count)
+
+        return hasher.finalize()
+    }
+}

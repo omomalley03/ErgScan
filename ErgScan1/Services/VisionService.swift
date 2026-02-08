@@ -9,15 +9,22 @@ actor VisionService {
     // MARK: - Properties
 
     private let textRecognitionRequest: VNRecognizeTextRequest
+    private let liveRecognitionRequest: VNRecognizeTextRequest
 
     // MARK: - Initialization
 
     init() {
-        // Configure Vision text recognition request
+        // Configure Vision text recognition request for accurate single-shot capture
         textRecognitionRequest = VNRecognizeTextRequest()
         textRecognitionRequest.recognitionLevel = .accurate  // Best accuracy for numbers
         textRecognitionRequest.usesLanguageCorrection = false // Disable autocorrect for numbers
         textRecognitionRequest.recognitionLanguages = ["en-US"]
+
+        // Configure fast recognition request for real-time continuous scanning
+        liveRecognitionRequest = VNRecognizeTextRequest()
+        liveRecognitionRequest.recognitionLevel = .fast  // Faster processing for real-time
+        liveRecognitionRequest.usesLanguageCorrection = false
+        liveRecognitionRequest.recognitionLanguages = ["en-US"]
     }
 
     // MARK: - Public Methods
@@ -83,6 +90,47 @@ actor VisionService {
             }
 
             guard topCandidate.confidence > 0.3 else {
+                return nil
+            }
+
+            return OCRResult(
+                text: topCandidate.string,
+                confidence: topCandidate.confidence,
+                boundingBox: observation.boundingBox
+            )
+        }
+    }
+
+    /// Recognize text in real-time using fast mode (for continuous frame processing)
+    /// - Parameters:
+    ///   - pixelBuffer: CVPixelBuffer from camera frame
+    ///   - roi: Optional region of interest (normalized 0-1 coordinates)
+    /// - Returns: Array of OCR results with higher confidence threshold
+    func recognizeTextLive(in pixelBuffer: CVPixelBuffer, roi: CGRect? = nil) async throws -> [OCRResult] {
+        // Set ROI if provided
+        if let roi = roi {
+            liveRecognitionRequest.regionOfInterest = roi
+        }
+
+        let requestHandler = VNImageRequestHandler(
+            cvPixelBuffer: pixelBuffer,
+            orientation: .up,
+            options: [:]
+        )
+
+        try requestHandler.perform([liveRecognitionRequest])
+
+        guard let observations = liveRecognitionRequest.results else {
+            return []
+        }
+
+        return observations.compactMap { observation in
+            guard let topCandidate = observation.topCandidates(1).first else {
+                return nil
+            }
+
+            // Higher confidence threshold for live scanning (reduce false positives)
+            guard topCandidate.confidence > 0.6 else {
                 return nil
             }
 

@@ -1,93 +1,66 @@
 import SwiftUI
 import SwiftData
 
-/// Debug scanner: top half camera + guide, bottom half OCR results with guide-relative coords
+/// Continuous OCR scanner with state-based UI (scanning → locked → saved)
 struct ScannerView: View {
 
     @Environment(\.modelContext) private var modelContext
     @StateObject private var viewModel = ScannerViewModel()
+    @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
     var body: some View {
         VStack(spacing: 0) {
-            // ---- TOP HALF: Camera preview or captured photo ----
+            // ---- TOP HALF: Camera preview with state-based overlays ----
             ZStack {
-                if let capturedImage = viewModel.capturedImage {
-                    Image(uiImage: capturedImage)
-                        .resizable()
-                        .scaledToFill()
-                        .clipped()
-                } else if viewModel.cameraService.isSessionRunning {
+                if viewModel.cameraService.isSessionRunning {
                     CameraPreviewView(previewLayer: viewModel.cameraService.previewLayer)
                 } else {
                     Color.black
                 }
 
-                // Square positioning guide (only during live preview)
-                if viewModel.capturedImage == nil {
+                // State-based overlays
+                switch viewModel.state {
+                case .ready, .capturing:
+                    // Square positioning guide during ready and capturing
                     PositioningGuideView()
-                }
 
-                // Processing indicator
-                if viewModel.isProcessing {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .tint(.white)
+                case .locked:
+                    // Green checkmark overlay when locked
+                    LockedGuideOverlay()
+
+                case .saved:
+                    // No overlay for saved state
+                    EmptyView()
                 }
             }
             .frame(maxHeight: .infinity)
             .clipped()
 
-            // ---- BOTTOM HALF: Debug tabbed view ----
+            // ---- BOTTOM HALF: State-based content ----
             VStack(spacing: 0) {
-                if viewModel.capturedImage == nil {
-                    VStack(spacing: 8) {
-                        Image(systemName: "doc.text.viewfinder")
-                            .font(.system(size: 36))
-                            .foregroundColor(.secondary.opacity(0.5))
-                        Text("Align monitor in square, then capture")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    DebugTabbedView(
-                        debugResults: viewModel.debugResults,
-                        parsedTable: viewModel.parsedTable,
-                        debugLog: viewModel.parserDebugLog
-                    )
-                }
+                switch viewModel.state {
+                case .ready:
+                    readyContent
 
-                // Bottom controls
-                HStack(spacing: 32) {
-                    if viewModel.capturedImage != nil {
-                        Button {
-                            viewModel.retake()
-                        } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "arrow.counterclockwise.circle.fill")
-                                    .font(.system(size: 28))
-                                Text("Retake")
-                                    .font(.subheadline)
-                                    .fontWeight(.semibold)
-                            }
-                            .foregroundColor(.accentColor)
-                        }
-                    } else {
-                        Button {
+                case .capturing:
+                    capturingContent
+
+                case .locked(let table):
+                    EditableWorkoutForm(
+                        table: table,
+                        onSave: {
                             Task {
-                                await viewModel.capturePhoto()
+                                await viewModel.saveWorkout(context: modelContext)
                             }
-                        } label: {
-                            Image(systemName: "camera.circle.fill")
-                                .font(.system(size: 44))
-                                .foregroundColor(.accentColor)
+                        },
+                        onRetake: {
+                            viewModel.retake()
                         }
-                        .disabled(viewModel.isProcessing)
-                    }
+                    )
+
+                case .saved:
+                    savedContent
                 }
-                .padding(.vertical, 12)
-                .frame(maxWidth: .infinity)
-                .background(Color(.systemBackground))
             }
             .frame(maxHeight: .infinity)
             .background(Color(.systemBackground))
@@ -104,6 +77,139 @@ struct ScannerView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+    }
+
+    // MARK: - Ready State Content
+
+    @ViewBuilder
+    private var readyContent: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            VStack(spacing: 12) {
+                Image(systemName: "camera.viewfinder")
+                    .font(.system(size: 60))
+                    .foregroundColor(.secondary)
+
+                Text("Align monitor in square guide")
+                    .font(.headline)
+                    .foregroundColor(.secondary)
+            }
+
+            Spacer()
+
+            Button {
+                Task {
+                    await viewModel.startScanning()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "camera.fill")
+                    Text("Start Scanning")
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Capturing State Content
+
+    @ViewBuilder
+    private var capturingContent: some View {
+        VStack(spacing: 0) {
+            // Progress indicator
+            VStack(spacing: 12) {
+                HStack {
+                    Text("Scanning... (Capture \(viewModel.captureCount))")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+
+                    Spacer()
+
+                    HStack(spacing: 4) {
+                        ProgressView(value: viewModel.fieldProgress, total: 1.0)
+                            .frame(width: 60)
+                        Text("\(Int(viewModel.fieldProgress * 100))%")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .foregroundColor(.secondary)
+                            .frame(width: 40, alignment: .trailing)
+                    }
+                }
+                .padding()
+
+                // Progress message
+                Text(progressMessage)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+            }
+
+            // Optional debug tabs (developer mode)
+            if showDebugTabs, let parsedTable = viewModel.currentTable {
+                Divider()
+                DebugTabbedView(
+                    debugResults: viewModel.debugResults,
+                    parsedTable: parsedTable,
+                    debugLog: viewModel.parserDebugLog
+                )
+                .frame(maxHeight: .infinity)
+            }
+
+            Spacer()
+        }
+    }
+
+    private var progressMessage: String {
+        if viewModel.fieldProgress < 0.3 {
+            return "Looking for workout data..."
+        } else if viewModel.fieldProgress < 0.7 {
+            return "Filling in missing fields..."
+        } else if viewModel.fieldProgress < 1.0 {
+            return "Almost there! Completing final fields..."
+        } else {
+            return "All fields captured!"
+        }
+    }
+
+    // MARK: - Saved State Content
+
+    @ViewBuilder
+    private var savedContent: some View {
+        VStack(spacing: 20) {
+            Spacer()
+
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 80))
+                .foregroundColor(.green)
+
+            Text("Workout Saved!")
+                .font(.title2)
+                .fontWeight(.bold)
+
+            Spacer()
+
+            Button {
+                viewModel.retake()
+            } label: {
+                HStack {
+                    Image(systemName: "plus.circle.fill")
+                    Text("Scan Another")
+                }
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+            .padding()
         }
     }
 }

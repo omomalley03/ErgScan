@@ -3,7 +3,9 @@ import Combine
 import AVFoundation
 import UIKit
 
-/// Camera service for preview and full-resolution photo capture
+typealias FrameHandler = (CVPixelBuffer) -> Void
+
+/// Camera service for preview, photo capture, and continuous video frame processing
 @MainActor
 final class CameraService: NSObject, ObservableObject {
 
@@ -17,6 +19,11 @@ final class CameraService: NSObject, ObservableObject {
     private let captureSession = AVCaptureSession()
     private var photoOutput: AVCapturePhotoOutput?
     private var photoContinuation: CheckedContinuation<UIImage?, Never>?
+
+    // Video output for continuous frame capture
+    private var videoOutput: AVCaptureVideoDataOutput?
+    private let videoDataQueue = DispatchQueue(label: "com.ergscan.videodata", qos: .userInitiated)
+    private var frameHandler: FrameHandler?
 
     lazy var previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: captureSession)
@@ -117,6 +124,49 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    // MARK: - Continuous Frame Capture
+
+    /// Setup continuous video frame capture for real-time OCR
+    func setupContinuousCapture(frameHandler: @escaping FrameHandler) async throws {
+        self.frameHandler = frameHandler
+
+        captureSession.beginConfiguration()
+
+        // Create video data output
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: videoDataQueue)
+
+        guard captureSession.canAddOutput(output) else {
+            captureSession.commitConfiguration()
+            throw CameraError.cannotAddOutput
+        }
+
+        captureSession.addOutput(output)
+        videoOutput = output
+
+        // Configure connection for portrait orientation
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+        }
+
+        captureSession.commitConfiguration()
+    }
+
+    /// Stop continuous frame capture
+    func stopContinuousCapture() {
+        if let videoOutput = videoOutput {
+            captureSession.removeOutput(videoOutput)
+            self.videoOutput = nil
+        }
+        frameHandler = nil
+    }
+
     // MARK: - Photo Capture
 
     func capturePhoto() async -> UIImage? {
@@ -158,6 +208,25 @@ extension CameraService: AVCapturePhotoCaptureDelegate {
             }
 
             continuation.resume(returning: image)
+        }
+    }
+}
+
+// MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
+
+extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
+
+    nonisolated func captureOutput(
+        _ output: AVCaptureOutput,
+        didOutput sampleBuffer: CMSampleBuffer,
+        from connection: AVCaptureConnection
+    ) {
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            return
+        }
+
+        Task { @MainActor in
+            frameHandler?(pixelBuffer)
         }
     }
 }
