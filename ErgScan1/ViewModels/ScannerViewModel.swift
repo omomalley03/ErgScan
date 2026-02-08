@@ -53,6 +53,10 @@ class ScannerViewModel: ObservableObject {
     private var hasTriggeredHaptic = false
     private var accumulatedTable: RecognizedTable?  // Accumulate best data across scans
 
+    // Benchmark tracking: save all captured images for ground truth dataset
+    private var capturedImagesForBenchmark: [UIImage] = []
+    private var capturedOCRResultsForBenchmark: [(ocrResults: [GuideRelativeOCRResult], parsedTable: RecognizedTable, debugLog: String)] = []
+
     // Performance optimization: only compute debug info when needed
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
@@ -146,6 +150,9 @@ class ScannerViewModel: ObservableObject {
 
         let croppedImage = UIImage(cgImage: croppedCG, scale: fullImage.scale, orientation: fullImage.imageOrientation)
 
+        // Save captured image for benchmark dataset
+        capturedImagesForBenchmark.append(croppedImage)
+
         // Run OCR
         do {
             let ocrResults = try await visionService.recognizeText(in: croppedImage)
@@ -173,6 +180,9 @@ class ScannerViewModel: ObservableObject {
             // Merge with accumulated table (preserve good data from previous scans)
             let mergedTable = mergeTable(existing: accumulatedTable, new: newTable)
             accumulatedTable = mergedTable
+
+            // Save OCR results for benchmark dataset
+            capturedOCRResultsForBenchmark.append((guideRelativeResults, mergedTable, parseResult.debugLog))
 
             // Update published properties
             currentTable = mergedTable
@@ -221,18 +231,93 @@ class ScannerViewModel: ObservableObject {
         debugResults = []
         parserDebugLog = ""
         hasTriggeredHaptic = false
+        capturedImagesForBenchmark = []  // Clear benchmark images
+        capturedOCRResultsForBenchmark = []  // Clear OCR results
         print("🔄 Reset to ready state")
     }
 
     // MARK: - Save Workout
 
     func saveWorkout(context: ModelContext) async {
-        guard case .locked = state else { return }
+        guard case .locked(let table) = state else { return }
 
-        // Create workout model and save
-        // TODO: Implement workout saving logic
+        // 1. Save production workout
+        // TODO: Implement production workout saving logic (Workout + Intervals)
+
+        // 2. Save benchmark dataset
+        saveBenchmarkDataset(table: table, context: context)
 
         state = .saved
+    }
+
+    private func saveBenchmarkDataset(table: RecognizedTable, context: ModelContext) {
+        print("💾 Saving benchmark dataset with \(capturedImagesForBenchmark.count) images")
+
+        // Create BenchmarkWorkout with ground truth from locked table
+        let benchmarkWorkout = BenchmarkWorkout(
+            workoutType: table.workoutType,
+            category: table.category,
+            workoutDescription: table.description,
+            totalTime: table.totalTime,
+            totalDistance: table.totalDistance,
+            date: table.date,
+            reps: table.reps,
+            workPerRep: table.workPerRep,
+            restPerRep: table.restPerRep
+        )
+        context.insert(benchmarkWorkout)
+
+        // Create BenchmarkIntervals from table rows
+        for (index, row) in table.rows.enumerated() {
+            let benchmarkInterval = BenchmarkInterval(
+                orderIndex: index,
+                time: row.time?.text,
+                meters: Int(row.meters?.text ?? "0"),
+                splitPer500m: row.splitPer500m?.text,
+                strokeRate: Int(row.strokeRate?.text ?? "0"),
+                heartRate: Int(row.heartRate?.text ?? "0")
+            )
+            benchmarkInterval.workout = benchmarkWorkout
+            context.insert(benchmarkInterval)
+        }
+
+        // Create BenchmarkImages for all captured photos
+        for (index, image) in capturedImagesForBenchmark.enumerated() {
+            // Compress image to JPEG at 0.8 quality
+            guard let imageData = image.jpegData(compressionQuality: 0.8) else {
+                print("⚠️ Failed to compress image \(index + 1)")
+                continue
+            }
+
+            let benchmarkImage = BenchmarkImage(
+                imageData: imageData,
+                angleDescription: "Capture \(index + 1) of \(capturedImagesForBenchmark.count)",
+                resolution: "\(Int(image.size.width))x\(Int(image.size.height))"
+            )
+
+            // Save initial OCR results
+            if index < capturedOCRResultsForBenchmark.count {
+                let ocrData = capturedOCRResultsForBenchmark[index]
+                benchmarkImage.rawOCRResults = try? JSONEncoder().encode(ocrData.ocrResults)
+                benchmarkImage.parsedTable = try? JSONEncoder().encode(ocrData.parsedTable)
+                benchmarkImage.ocrConfidence = ocrData.parsedTable.averageConfidence
+                benchmarkImage.parserDebugLog = ocrData.debugLog
+            }
+
+            benchmarkImage.workout = benchmarkWorkout
+            context.insert(benchmarkImage)
+        }
+
+        // Save context
+        do {
+            try context.save()
+            print("✅ Benchmark dataset saved successfully")
+        } catch {
+            print("❌ Error saving benchmark dataset: \(error)")
+        }
+
+        // Clear captured images
+        capturedImagesForBenchmark = []
     }
 
     // MARK: - Field Editing

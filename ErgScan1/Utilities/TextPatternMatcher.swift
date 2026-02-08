@@ -30,8 +30,8 @@ struct TextPatternMatcher {
     /// Stroke rate format: "29" or "32" (2 digits, validated 10-60)
     static let ratePattern = #"^\d{2}$"#
 
-    /// Date format: "Dec 20 2025" — allow variable whitespace
-    static let datePattern = #"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}$"#
+    /// Date format: "Dec 20 2025" — relaxed to handle OCR artifacts
+    static let datePattern = #"^[A-Za-z]{3}:?\s*\d{1,2}[\s.]+\d{4}$"#
 
     /// Interval workout type: "3x4:00/3:00r" or "12x500m/1:30r"
     static let intervalTypePattern = #"^\d{1,2}x[\d:]+[rm]?/[\d:]+r?$"#
@@ -43,6 +43,53 @@ struct TextPatternMatcher {
     static let totalTimePattern = #"^\d{1,2}:\d{2}(:\d{2})?\.\d$"#
 
     // MARK: - Step 0: Context-Aware Normalization
+
+    /// Normalize workout descriptor strings (e.g., "3x20:00/1:00r").
+    /// This is more aggressive than general normalize() because descriptors have strict format.
+    func normalizeDescriptor(_ text: String) -> String {
+        var result = text.trimmingCharacters(in: .whitespaces)
+
+        // 1. Apply Cyrillic substitutions (same as normalize)
+        result = result.replacingOccurrences(of: "г", with: "r")
+        result = result.replacingOccurrences(of: "м", with: "m")
+        result = result.replacingOccurrences(of: "а", with: "a")
+        result = result.replacingOccurrences(of: "е", with: "e")
+        result = result.replacingOccurrences(of: "о", with: "o")
+
+        // 2. Replace leading B with 3 when followed by x (Bx → 3x)
+        if result.hasPrefix("B") && result.count > 1 {
+            let secondChar = result[result.index(result.startIndex, offsetBy: 1)]
+            if secondChar == "x" {
+                result = "3" + result.dropFirst()
+            }
+        }
+
+        // 3. Convert comma to slash (in descriptor, comma is always misread separator)
+        result = result.replacingOccurrences(of: ",", with: "/")
+
+        // 4. Fix missing separator: detect concatenated times after 'x'
+        // Pattern: after Nx, find first complete time (\d+:\d{2}) and insert / if another digit follows
+        // Example: "3x4:0013:00r" → "3x4:00/3:00r"
+        if let xRange = result.range(of: "x", options: .literal) {
+            let afterX = String(result[xRange.upperBound...])
+
+            // Match first time component: \d+:\d{2}
+            let timePattern = #"^(\d+:\d{2})(\d)"#
+            if let regex = try? NSRegularExpression(pattern: timePattern),
+               let match = regex.firstMatch(in: afterX, range: NSRange(afterX.startIndex..., in: afterX)) {
+                // Found pattern like "4:0013" — insert "/" after "4:00"
+                if match.numberOfRanges >= 3,
+                   let firstTimeRange = Range(match.range(at: 1), in: afterX) {
+                    let firstTime = String(afterX[firstTimeRange])
+                    let rest = String(afterX[firstTimeRange.upperBound...])
+                    let beforeX = String(result[..<xRange.upperBound])
+                    result = beforeX + firstTime + "/" + rest
+                }
+            }
+        }
+
+        return result
+    }
 
     /// Normalize OCR text with context-aware character substitutions.
     /// Alphabetic substitutions only apply when the character is adjacent to
@@ -179,12 +226,53 @@ struct TextPatternMatcher {
     }
 
     func matchDate(_ text: String) -> Date? {
-        guard matches(text, pattern: Self.datePattern) else { return nil }
+        // Pre-process date string to handle OCR artifacts
+        var cleaned = text.trimmingCharacters(in: .whitespaces)
+
+        // 1. Strip colon after 3-letter month abbreviation (e.g., "Sep:" → "Sep")
+        cleaned = cleaned.replacingOccurrences(of: #"^([A-Za-z]{3}):"#, with: "$1", options: .regularExpression)
+
+        // 2. Replace period between digits with space (e.g., "14.2025" → "14 2025")
+        cleaned = cleaned.replacingOccurrences(of: #"(\d)\.(\d)"#, with: "$1 $2", options: .regularExpression)
+
+        // 3. Normalize multiple spaces to single space
+        cleaned = cleaned.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+
+        // 4. Handle concatenated day+year (e.g., "212025" → "21 2025")
+        // Match pattern: "MonthAbbrev NNNNNN" where NNNNNN is concatenated day+year
+        if let regex = try? NSRegularExpression(pattern: #"^([A-Za-z]{3}):?\s+(\d{5,7})$"#),
+           let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)) {
+            if match.numberOfRanges >= 3,
+               let monthRange = Range(match.range(at: 1), in: cleaned),
+               let numberRange = Range(match.range(at: 2), in: cleaned) {
+                let month = String(cleaned[monthRange])
+                let number = String(cleaned[numberRange])
+
+                // Try splitting as day (1-2 digits) + year (4 digits)
+                for dayLen in 1...2 {
+                    if number.count >= dayLen + 4 {
+                        let dayStr = String(number.prefix(dayLen))
+                        let yearStr = String(number.suffix(4))
+
+                        if let day = Int(dayStr), day >= 1, day <= 31,
+                           let year = Int(yearStr), year >= 2020, year <= 2030 {
+                            cleaned = "\(month) \(dayStr) \(yearStr)"
+                            break
+                        }
+                    }
+                }
+            }
+        }
+
+        // Try matching with regex pattern
+        guard matches(cleaned, pattern: Self.datePattern) else { return nil }
+
+        // Try parsing with DateFormatter
         let formatter = DateFormatter()
         formatter.dateFormat = "MMM dd yyyy"
         formatter.locale = Locale(identifier: "en_US")
-        return formatter.date(from: text)
-            ?? formatter.date(from: normalizeWhitespace(text))
+        return formatter.date(from: cleaned)
+            ?? formatter.date(from: normalizeWhitespace(cleaned))
     }
 
     func matchWorkoutType(_ text: String) -> Bool {

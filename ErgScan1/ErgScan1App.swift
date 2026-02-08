@@ -14,6 +14,9 @@ struct ErgScan1App: App {
         let schema = Schema([
             Workout.self,
             Interval.self,
+            BenchmarkWorkout.self,
+            BenchmarkInterval.self,
+            BenchmarkImage.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

@@ -296,59 +296,41 @@ class TableParserService {
     private func extractDescriptor(from row: RowData) -> String? {
         log("Trying to extract descriptor from row fragments...")
 
-        // Try each fragment individually (normalized)
+        // Try each fragment individually (using descriptor-specific normalization)
         for (idx, fragment) in row.fragments.enumerated() {
-            let normalized = matcher.normalize(fragment.text)
+            let normalized = matcher.normalizeDescriptor(fragment.text)
             log("  Fragment \(idx): '\(fragment.text)' -> normalized: '\(normalized)'")
 
-            // Fix common comma: "3x4:00,3:00r" → "3x4:00/3:00r"
-            let fixed = normalized.replacingOccurrences(of: ",", with: "/")
-            if fixed != normalized {
-                log("    Comma-fixed: '\(fixed)'")
-            }
-
-            if matcher.matchWorkoutType(fixed) {
-                log("    ✓ Matches workout type pattern (comma-fixed)")
-                return fixed
-            }
             if matcher.matchWorkoutType(normalized) {
                 log("    ✓ Matches workout type pattern")
                 return normalized
             }
         }
 
-        // Try the joined normalized text
-        log("Trying joined text: '\(row.normalizedText)'")
-        let fixed = row.normalizedText.replacingOccurrences(of: ",", with: "/")
-        if fixed != row.normalizedText {
-            log("  Comma-fixed joined: '\(fixed)'")
+        // Try the joined text with descriptor normalization
+        log("Trying joined text: '\(row.joinedText)'")
+        let normalized = matcher.normalizeDescriptor(row.joinedText)
+        if normalized != row.joinedText {
+            log("  Normalized: '\(normalized)'")
         }
-        if matcher.matchWorkoutType(fixed) {
-            log("  ✓ Joined text matches (comma-fixed)")
-            return fixed
-        }
-        if matcher.matchWorkoutType(row.normalizedText) {
+        if matcher.matchWorkoutType(normalized) {
             log("  ✓ Joined text matches")
-            return row.normalizedText
+            return normalized
         }
 
         // Try splitting joined text on spaces and checking each part
-        let parts = row.normalizedText.split(separator: " ").map(String.init)
+        let parts = row.joinedText.split(separator: " ").map(String.init)
         if parts.count > 1 {
             log("Trying individual parts from joined text...")
             for (idx, part) in parts.enumerated() {
                 log("  Part \(idx): '\(part)'")
-                let fixedPart = part.replacingOccurrences(of: ",", with: "/")
-                if fixedPart != part {
-                    log("    Comma-fixed: '\(fixedPart)'")
+                let normalizedPart = matcher.normalizeDescriptor(part)
+                if normalizedPart != part {
+                    log("    Normalized: '\(normalizedPart)'")
                 }
-                if matcher.matchWorkoutType(fixedPart) {
-                    log("    ✓ Matches (comma-fixed)")
-                    return fixedPart
-                }
-                if matcher.matchWorkoutType(part) {
+                if matcher.matchWorkoutType(normalizedPart) {
                     log("    ✓ Matches")
-                    return part
+                    return normalizedPart
                 }
             }
         }
@@ -471,6 +453,14 @@ class TableParserService {
         // Fallback: If we have 4 items but only 3 columns detected, assume the 4th is rate
         if items.count == 4 && columns.count == 3 && !columns.contains(.rate) {
             log("  Fallback: Detected 4 header items but only 3 columns, adding rate as 4th column")
+            columns.append(.rate)
+        }
+
+        // Second fallback: PM5 always displays 4 columns (time, meters, /500m, s/m)
+        // If we detected the standard 3 columns but not rate, always append it
+        if columns.count == 3 && !columns.contains(.rate) &&
+           columns.contains(.time) && columns.contains(.meters) && columns.contains(.split) {
+            log("  Fallback: Standard 3-column layout detected, appending rate as 4th column (PM5 always has 4 columns)")
             columns.append(.rate)
         }
 

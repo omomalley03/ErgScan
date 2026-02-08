@@ -136,3 +136,10 @@ extension RecognizedTable {
         return hasher.finalize()
     }
 }
+
+// MARK: - Codable Conformance
+
+extension OCRResult: Codable {}
+extension GuideRelativeOCRResult: Codable {}
+extension RecognizedTable: Codable {}
+extension TableRow: Codable {}
