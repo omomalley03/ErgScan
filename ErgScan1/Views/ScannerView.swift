@@ -37,9 +37,9 @@ struct ScannerView: View {
             .frame(maxHeight: .infinity)
             .clipped()
 
-            // ---- BOTTOM HALF: Parsed table display ----
+            // ---- BOTTOM HALF: Debug tabbed view ----
             VStack(spacing: 0) {
-                if viewModel.parsedTable == nil && viewModel.capturedImage == nil {
+                if viewModel.capturedImage == nil {
                     VStack(spacing: 8) {
                         Image(systemName: "doc.text.viewfinder")
                             .font(.system(size: 36))
@@ -49,13 +49,12 @@ struct ScannerView: View {
                             .foregroundColor(.secondary)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let table = viewModel.parsedTable {
-                    ParsedTableDisplayView(table: table)
                 } else {
-                    Text("No data parsed")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    DebugTabbedView(
+                        debugResults: viewModel.debugResults,
+                        parsedTable: viewModel.parsedTable,
+                        debugLog: viewModel.parserDebugLog
+                    )
                 }
 
                 // Bottom controls

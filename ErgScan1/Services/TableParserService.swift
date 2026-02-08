@@ -22,6 +22,9 @@ class TableParserService {
     /// Column X-anchor tolerance: a value belongs to a column if within ±0.05
     private let columnTolerance: CGFloat = 0.05
 
+    /// Debug log buffer
+    private var debugLog: [String] = []
+
     // MARK: - Working Types
 
     /// Normalized OCR result with original spatial data preserved
@@ -53,10 +56,16 @@ class TableParserService {
 
     // MARK: - Public API
 
-    func parseTable(from results: [GuideRelativeOCRResult]) -> RecognizedTable {
+    func parseTable(from results: [GuideRelativeOCRResult]) -> (table: RecognizedTable, debugLog: String) {
+        debugLog = []
         var table = RecognizedTable()
 
-        guard !results.isEmpty else { return table }
+        guard !results.isEmpty else {
+            log("⚠️ No OCR results to parse")
+            return (table, debugLog.joined(separator: "\n"))
+        }
+
+        log("🚀 Starting parser with \(results.count) OCR results")
 
         // Step 0: Normalize all text
         let normalized = results.map { result -> NormalizedResult in
@@ -71,58 +80,82 @@ class TableParserService {
             )
         }
 
-        #if DEBUG
-        print("=== OCR Parser: Step 0 — Normalized ===")
+        log("\n📝 Step 0: Normalize text")
         for n in normalized {
-            let changed = n.originalText != n.normalizedText ? " → \"\(n.normalizedText)\"" : ""
-            print("  \"\(n.originalText)\"\(changed)  X=\(String(format: "%.2f", n.midX)) Y=\(String(format: "%.2f", n.midY))")
+            if n.originalText != n.normalizedText {
+                log("  \"\(n.originalText)\" → \"\(n.normalizedText)\" at X=\(String(format: "%.2f", n.midX)) Y=\(String(format: "%.2f", n.midY))")
+            }
         }
-        #endif
+        log("  ✓ Normalized \(normalized.count) results")
 
         // Step 1: Find landmarks
         let landmarks = findLandmarks(normalized)
 
-        #if DEBUG
-        print("=== OCR Parser: Step 1 — Landmarks ===")
-        for lm in landmarks {
-            print("  \(lm.type)  X=\(String(format: "%.2f", lm.midX)) Y=\(String(format: "%.2f", lm.midY))")
+        log("\n🔍 Step 1: Find landmarks")
+        if landmarks.isEmpty {
+            log("  ⚠️ No landmarks found")
+        } else {
+            for lm in landmarks {
+                log("  • \(lm.type) at X=\(String(format: "%.2f", lm.midX)) Y=\(String(format: "%.2f", lm.midY))")
+            }
         }
-        #endif
 
         // Step 2: Establish column X-anchors
         let anchors = establishColumnAnchors(landmarks)
 
-        #if DEBUG
-        print("=== OCR Parser: Step 2 — Column Anchors ===")
-        print("  timeX=\(anchors.timeX.map { String(format: "%.2f", $0) } ?? "nil")")
-        print("  metersX=\(anchors.metersX.map { String(format: "%.2f", $0) } ?? "nil")")
-        print("  splitX=\(anchors.splitX.map { String(format: "%.2f", $0) } ?? "nil")")
-        print("  rateX=\(anchors.rateX.map { String(format: "%.2f", $0) } ?? "nil")")
-        print("  headerY=\(anchors.headerY.map { String(format: "%.2f", $0) } ?? "nil")")
-        #endif
+        log("\n⚓️ Step 2: Establish column X-anchors")
+        log("  timeX = \(anchors.timeX.map { String(format: "%.2f", $0) } ?? "nil")")
+        log("  metersX = \(anchors.metersX.map { String(format: "%.2f", $0) } ?? "nil")")
+        log("  splitX = \(anchors.splitX.map { String(format: "%.2f", $0) } ?? "nil")")
+        log("  rateX = \(anchors.rateX.map { String(format: "%.2f", $0) } ?? "nil")")
+        log("  headerY = \(anchors.headerY.map { String(format: "%.2f", $0) } ?? "nil")")
 
         // Step 3: Group into rows
         let rows = boxAnalyzer.groupIntoRows(results)
 
-        #if DEBUG
-        print("=== OCR Parser: Step 3 — Rows ===")
-        for (i, row) in rows.enumerated() {
+        log("\n📋 Step 3: Group into rows")
+        log("  Found \(rows.count) rows")
+        for (i, row) in rows.enumerated().prefix(10) {
             let texts = row.map { "\"\($0.text)\"" }.joined(separator: ", ")
-            print("  Row \(i) (Y≈\(String(format: "%.2f", row.first?.guideRelativeBox.midY ?? 0))): \(texts)")
+            log("  Row \(i) (Y≈\(String(format: "%.2f", row.first?.guideRelativeBox.midY ?? 0))): \(texts)")
         }
-        #endif
+        if rows.count > 10 {
+            log("  ... (\(rows.count - 10) more rows)")
+        }
 
         // Step 4: Extract workout type
+        log("\n💪 Step 4: Extract workout type")
         table.workoutType = extractWorkoutType(from: normalized, landmarks: landmarks)
+        if let wt = table.workoutType {
+            log("  ✓ Found: \"\(wt)\"")
+        } else {
+            log("  ⚠️ Not found")
+        }
 
         // Step 5: Extract date
+        log("\n📅 Step 5: Extract date")
         table.date = extractDate(from: normalized, rows: rows)
+        if let date = table.date {
+            let formatter = DateFormatter()
+            formatter.dateFormat = "MMM dd yyyy"
+            log("  ✓ Found: \(formatter.string(from: date))")
+        } else {
+            log("  ⚠️ Not found")
+        }
 
         // Step 6: Extract total time
+        log("\n⏱️ Step 6: Extract total time")
         table.totalTime = extractTotalTime(from: normalized, landmarks: landmarks)
+        if let tt = table.totalTime {
+            log("  ✓ Found: \"\(tt)\"")
+        } else {
+            log("  ⚠️ Not found")
+        }
 
         // Step 7 & 9: Extract data rows (skipping junk), assign to columns
+        log("\n🔢 Step 7: Extract data rows")
         let headerY = anchors.headerY ?? 0.0
+        log("  Header Y threshold: \(String(format: "%.2f", headerY))")
         var dataRows: [TableRow] = []
 
         for row in rows {
@@ -134,11 +167,17 @@ class TableParserService {
                 dataRows.append(tableRow)
             }
         }
+        log("  ✓ Extracted \(dataRows.count) valid data rows")
 
         // Step 8: Assemble — first data row = averages, rest = intervals
+        log("\n🏗️ Step 8: Assemble result")
         if let first = dataRows.first {
             table.averages = first
             table.rows = Array(dataRows.dropFirst())
+            log("  ✓ Averages row assigned")
+            log("  ✓ \(table.rows.count) interval rows assigned")
+        } else {
+            log("  ⚠️ No data rows found")
         }
 
         // Detect category
@@ -149,27 +188,16 @@ class TableParserService {
         // Calculate confidence
         table.averageConfidence = calculateAverageConfidence(table)
 
-        #if DEBUG
-        print("=== OCR Parser: Result ===")
-        print("  workoutType: \(table.workoutType ?? "nil")")
-        print("  date: \(table.date?.description ?? "nil")")
-        print("  category: \(table.category?.rawValue ?? "nil")")
-        print("  totalTime: \(table.totalTime ?? "nil")")
-        print("  averages: time=\(table.averages?.time?.text ?? "nil") " +
-              "meters=\(table.averages?.meters?.text ?? "nil") " +
-              "split=\(table.averages?.splitPer500m?.text ?? "nil") " +
-              "rate=\(table.averages?.strokeRate?.text ?? "nil")")
-        print("  intervals: \(table.rows.count)")
-        for (i, row) in table.rows.enumerated() {
-            print("    [\(i)] time=\(row.time?.text ?? "nil") " +
-                  "meters=\(row.meters?.text ?? "nil") " +
-                  "split=\(row.splitPer500m?.text ?? "nil") " +
-                  "rate=\(row.strokeRate?.text ?? "nil")")
-        }
-        print("  confidence: \(String(format: "%.1f%%", table.averageConfidence * 100))")
-        #endif
+        log("\n✅ Parsing complete")
+        log("  Confidence: \(String(format: "%.0f%%", table.averageConfidence * 100))")
 
-        return table
+        return (table, debugLog.joined(separator: "\n"))
+    }
+
+    // MARK: - Debug Logging
+
+    private func log(_ message: String) {
+        debugLog.append(message)
     }
 
     // MARK: - Step 1: Find Landmarks
@@ -183,6 +211,25 @@ class TableParserService {
                 landmarks.append(DetectedLandmark(type: lm, midX: result.midX, midY: result.midY))
             } else if let lm = matcher.matchLandmark(result.normalizedText) {
                 landmarks.append(DetectedLandmark(type: lm, midX: result.midX, midY: result.midY))
+            }
+        }
+
+        // Filter split500m landmarks: only keep those on same Y-level as time/meter headers
+        // AND to the right of the meter landmark
+        let headerLandmarks = landmarks.filter { $0.type == .time || $0.type == .meter }
+        if !headerLandmarks.isEmpty {
+            let avgHeaderY = headerLandmarks.map { $0.midY }.reduce(0, +) / CGFloat(headerLandmarks.count)
+            let meterLandmark = landmarks.first { $0.type == .meter }
+
+            landmarks = landmarks.filter { lm in
+                if lm.type == .split500m {
+                    // Check Y-level: must be on same row as headers (±0.03)
+                    let onHeaderRow = abs(lm.midY - avgHeaderY) < 0.03
+                    // Check X-position: must be at least 0.05 to the right of meter landmark
+                    let rightOfMeter = meterLandmark.map { lm.midX > $0.midX + 0.05 } ?? true
+                    return onHeaderRow && rightOfMeter
+                }
+                return true
             }
         }
 
@@ -220,13 +267,16 @@ class TableParserService {
             anchors.headerY = headerCandidateYs.reduce(0, +) / CGFloat(headerCandidateYs.count)
         }
 
-        // Fallback: if no rate header found, use rightmost known header + offset, or 0.75
+        // Fallback: if no rate header found, try Total Time X + 0.02
         if anchors.rateX == nil {
-            let knownXs = [anchors.timeX, anchors.metersX, anchors.splitX].compactMap { $0 }
-            if let maxX = knownXs.max() {
-                anchors.rateX = min(maxX + 0.15, 0.90)
+            if let totalTimeLM = landmarks.first(where: { $0.type == .totalTime }) {
+                anchors.rateX = totalTimeLM.midX + 0.02
             } else {
-                anchors.rateX = 0.75
+                // Final fallback: use rightmost known header + offset, or 0.75
+                let knownXs = [anchors.timeX, anchors.metersX, anchors.splitX].compactMap { $0 }
+                if let maxX = knownXs.max() {
+                    anchors.rateX = min(maxX + 0.09, 0.90)
+                } 
             }
         }
 
@@ -242,10 +292,11 @@ class TableParserService {
         // Find "View Detail" landmark
         let viewDetailLM = landmarks.first { $0.type == .viewDetail }
 
-        if let vdY = viewDetailLM?.midY {
-            // Look for text just below View Detail (Y+0.03 to Y+0.09)
+        if let vdY = viewDetailLM?.midY, let vdX = viewDetailLM?.midX {
+            // Look for text just below View Detail (Y+0.01 to Y+0.09) and within X ±0.1
             let candidates = results.filter { r in
-                r.midY > vdY + 0.03 && r.midY < vdY + 0.09
+                r.midY > vdY + 0.01 && r.midY < vdY + 0.09 &&
+                abs(r.midX - vdX) < 0.1
             }
             for candidate in candidates {
                 let text = candidate.normalizedText

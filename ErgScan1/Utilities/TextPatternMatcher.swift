@@ -111,7 +111,7 @@ struct TextPatternMatcher {
         }
 
         // "/500m" or "500m" — check before "meter" since "500m" contains "m"
-        if lower.contains("500m") || lower.contains("500rn") ||
+        if lower.contains("500m") || lower.contains("500rn") || 
            lower.contains("/500") || fuzzyMatch(lower, target: "/500m", maxDistance: 2) {
             return .split500m
         }

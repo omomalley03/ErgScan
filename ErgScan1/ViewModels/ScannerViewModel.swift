@@ -12,6 +12,7 @@ class ScannerViewModel: ObservableObject {
     @Published var capturedImage: UIImage?
     @Published var debugResults: [GuideRelativeOCRResult] = []
     @Published var parsedTable: RecognizedTable?
+    @Published var parserDebugLog: String = ""
     @Published var isProcessing = false
     @Published var errorMessage: String?
 
@@ -108,7 +109,9 @@ class ScannerViewModel: ObservableObject {
             }
 
             // Run the parser on the guide-relative results
-            parsedTable = tableParser.parseTable(from: debugResults)
+            let result = tableParser.parseTable(from: debugResults)
+            parsedTable = result.table
+            parserDebugLog = result.debugLog
 
         } catch {
             errorMessage = "OCR error: \(error.localizedDescription)"
@@ -121,5 +124,6 @@ class ScannerViewModel: ObservableObject {
         capturedImage = nil
         debugResults = []
         parsedTable = nil
+        parserDebugLog = ""
     }
 }
