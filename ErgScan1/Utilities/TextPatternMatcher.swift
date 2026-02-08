@@ -18,8 +18,8 @@ struct TextPatternMatcher {
 
     // MARK: - Regex Patterns
 
-    /// Time format: "4:00.0" or "12:00.0"
-    static let timePattern = #"^\d{1,2}:\d{2}\.\d$"#
+    /// Time format: "4:00.0", "12:00.0", or "1:23:45.6"
+    static let timePattern = #"^\d{1,2}:\d{2}(:\d{2})?\.\d$"#
 
     /// Split pace format: "1:41.2" or "1:41.29"
     static let splitPattern = #"^\d:\d{2}\.\d{1,2}$"#
@@ -33,14 +33,14 @@ struct TextPatternMatcher {
     /// Date format: "Dec 20 2025" — allow variable whitespace
     static let datePattern = #"^[A-Z][a-z]{2}\s+\d{1,2}\s+\d{4}$"#
 
-    /// Interval workout type: "3x4:00/3:00r"
-    static let intervalTypePattern = #"^\d+x[\d:]+[rm]?/[\d:]+r$"#
+    /// Interval workout type: "3x4:00/3:00r" or "12x500m/1:30r"
+    static let intervalTypePattern = #"^\d{1,2}x[\d:]+[rm]?/[\d:]+r?$"#
 
     /// Single piece workout type: "2000m" or "4:00" or "30:00"
     static let singleTypePattern = #"^(\d+m|\d+:\d{2})$"#
 
-    /// Total time format: "21:00.3"
-    static let totalTimePattern = #"^\d{1,2}:\d{2}\.\d$"#
+    /// Total time format: "21:00.3" or "1:23:45.6"
+    static let totalTimePattern = #"^\d{1,2}:\d{2}(:\d{2})?\.\d$"#
 
     // MARK: - Step 0: Context-Aware Normalization
 
@@ -87,6 +87,25 @@ struct TextPatternMatcher {
             }
         }
 
+        // Fourth pass: Cyrillic character substitutions (OCR often confuses similar-looking characters)
+        for i in chars.indices {
+            let c = chars[i]
+            switch c {
+            case "г":  // Cyrillic ge (U+0433) looks like Latin r
+                chars[i] = "r"
+            case "м":  // Cyrillic em (U+043C) looks like Latin m
+                chars[i] = "m"
+            case "а":  // Cyrillic a (U+0430) looks like Latin a
+                chars[i] = "a"
+            case "е":  // Cyrillic ye (U+0435) looks like Latin e
+                chars[i] = "e"
+            case "о":  // Cyrillic o (U+043E) looks like Latin o
+                chars[i] = "o"
+            default:
+                break
+            }
+        }
+
         return String(chars)
     }
 
@@ -116,8 +135,8 @@ struct TextPatternMatcher {
             return .split500m
         }
 
-        // "s/m" — stroke rate header
-        if lower == "s/m" || lower == "s/ m" || lower == "s/rn" ||
+        // "s/m" — stroke rate header (OCR often reads this as "E", "s/ m", "s/rn", etc.)
+        if lower == "s/m" || lower == "s/ m" || lower == "s/rn" || lower == "e" ||
            fuzzyMatch(lower, target: "s/m", maxDistance: 1) {
             return .strokeRateHeader
         }
@@ -207,6 +226,41 @@ struct TextPatternMatcher {
         return nil
     }
 
+    // MARK: - Interval Workout Parsing
+
+    /// Parse interval workout string like "3x4:00/3:00r" or "12x500m/1:30r"
+    /// Returns (reps, workTime, restTime) or nil if not a valid interval format
+    func parseIntervalWorkout(_ text: String) -> (reps: Int, workTime: String, restTime: String)? {
+        // Pattern: capture groups for reps, work time, and rest time
+        let pattern = #"^(\d{1,2})x([\d:]+[rm]?)/([\d:]+)r?$"#
+
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let range = NSRange(text.startIndex..., in: text)
+        guard let match = regex.firstMatch(in: text, range: range) else {
+            return nil
+        }
+
+        // Extract captured groups
+        guard match.numberOfRanges == 4 else { return nil }
+
+        guard let repsRange = Range(match.range(at: 1), in: text),
+              let workTimeRange = Range(match.range(at: 2), in: text),
+              let restTimeRange = Range(match.range(at: 3), in: text) else {
+            return nil
+        }
+
+        let repsString = String(text[repsRange])
+        let workTime = String(text[workTimeRange])
+        let restTime = String(text[restTimeRange])
+
+        guard let reps = Int(repsString) else { return nil }
+
+        return (reps, workTime, restTime)
+    }
+
     // MARK: - Workout Category Detection
 
     func detectWorkoutCategory(_ workoutType: String) -> WorkoutCategory {
@@ -239,6 +293,47 @@ struct TextPatternMatcher {
         if matches(lower, pattern: #"^r\d+"#) { return true }
 
         return false
+    }
+
+    // MARK: - Text Splitting for Smooshed Values
+
+    /// Split smooshed text that contains multiple patterns (e.g., "time meter" or "1:42.5 29")
+    func splitSmooshedText(_ text: String) -> [String] {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+
+        // 1. Check if entire text matches a pattern - if so, don't split
+        if matchesAnyPattern(trimmed) { return [trimmed] }
+
+        // 2. Try space-separated split first (most common case)
+        let spaceSplit = trimmed.split(separator: " ").map(String.init)
+        if spaceSplit.count > 1 {
+            // Check if all parts are valid patterns or landmarks
+            let allValid = spaceSplit.allSatisfy { part in
+                matchesAnyPattern(part) || isLandmarkText(part)
+            }
+            if allValid {
+                return spaceSplit
+            }
+        }
+
+        // 3. Try existing parseCombinedSplitRate for concatenated split+rate
+        if let combined = parseCombinedSplitRate(trimmed) {
+            return [combined.split, combined.rate]
+        }
+
+        // 4. Fallback: return original if no valid split found
+        return [trimmed]
+    }
+
+    /// Check if text matches any recognized pattern
+    func matchesAnyPattern(_ text: String) -> Bool {
+        matchTime(text) || matchSplit(text) || matchMeters(text) ||
+        matchRate(text) || matchDate(text) != nil || matchWorkoutType(text)
+    }
+
+    /// Check if text is a recognized landmark
+    func isLandmarkText(_ text: String) -> Bool {
+        matchLandmark(text) != nil
     }
 
     // MARK: - Private Helpers

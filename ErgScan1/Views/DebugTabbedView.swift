@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Horizontally scrollable tabs showing raw OCR results, parsed JSON, and debug logs
+/// Tabs: Workout result view (default), raw OCR results, parsed JSON, and debug logs
 struct DebugTabbedView: View {
     let debugResults: [GuideRelativeOCRResult]
     let parsedTable: RecognizedTable?
@@ -13,9 +13,10 @@ struct DebugTabbedView: View {
             // Tab selector
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 0) {
-                    tabButton(title: "Raw Sorted", index: 0)
-                    tabButton(title: "JSON", index: 1)
-                    tabButton(title: "Debug Log", index: 2)
+                    tabButton(title: "Workout", index: 0)
+                    tabButton(title: "Raw Sorted", index: 1)
+                    tabButton(title: "JSON", index: 2)
+                    tabButton(title: "Debug Log", index: 3)
                 }
                 .padding(.horizontal, 8)
             }
@@ -24,19 +25,27 @@ struct DebugTabbedView: View {
 
             // Tab content
             TabView(selection: $selectedTab) {
+                if let table = parsedTable {
+                    WorkoutResultView(table: table)
+                        .tag(0)
+                } else {
+                    emptyView
+                        .tag(0)
+                }
+
                 rawSortedView
-                    .tag(0)
+                    .tag(1)
 
                 if let table = parsedTable {
                     ParsedTableDisplayView(table: table)
-                        .tag(1)
+                        .tag(2)
                 } else {
                     emptyView
-                        .tag(1)
+                        .tag(2)
                 }
 
                 debugLogView
-                    .tag(2)
+                    .tag(3)
             }
             .tabViewStyle(.page(indexDisplayMode: .never))
         }
@@ -65,7 +74,7 @@ struct DebugTabbedView: View {
                 }
             }
         }
-        .frame(minWidth: 100)
+        .frame(minWidth: 80)
     }
 
     private var rawSortedView: some View {
@@ -130,14 +139,47 @@ struct DebugTabbedView: View {
     }
 
     private var debugLogView: some View {
-        ScrollView {
-            Text(debugLog.isEmpty ? "No debug log available" : debugLog)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundColor(debugLog.isEmpty ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding()
+        VStack(spacing: 0) {
+            // Copy button bar
+            HStack {
+                Text("Debug Log")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+
+                Spacer()
+
+                Button {
+                    UIPasteboard.general.string = debugLog
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "doc.on.doc")
+                        Text("Copy")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(debugLog.isEmpty ? Color.gray : Color.accentColor)
+                    .cornerRadius(8)
+                }
+                .disabled(debugLog.isEmpty)
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground))
+
+            Divider()
+
+            // Log content
+            ScrollView {
+                Text(debugLog.isEmpty ? "No debug log available" : debugLog)
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundColor(debugLog.isEmpty ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+                    .textSelection(.enabled)
+            }
+            .background(Color(.systemBackground))
         }
-        .background(Color(.systemBackground))
     }
 
     private var emptyView: some View {

@@ -3,55 +3,37 @@ import CoreGraphics
 
 /// Parses OCR results from a Concept2 PM5 monitor into structured workout data.
 ///
-/// Pipeline (Steps 0–9):
-/// 0. Normalize text (context-aware character substitutions)
-/// 1. Find landmark labels (fuzzy matching)
-/// 2. Establish column X-anchors from header landmarks
-/// 3. Group into rows by Y proximity
-/// 4. Extract workout type
-/// 5. Extract date
-/// 6. Extract total time
-/// 7. Extract data rows using column X-anchors
-/// 8. Assemble result
-/// 9. Filter junk
+/// Pipeline:
+/// 1. Group OCR detections into rows by Y-coordinate clustering
+/// 2. Join fragments per row, normalize text
+/// 3. Find "View Detail" anchor row
+/// 4. Extract workout descriptor, classify as intervals or single
+/// 5. Extract date and total time
+/// 6. Determine column order from header row
+/// 7. Parse summary (averages) row
+/// 8. Parse data rows (intervals or splits)
+/// 9. Validate and calculate confidence
 class TableParserService {
 
-    private let matcher = TextPatternMatcher()
     private let boxAnalyzer = BoundingBoxAnalyzer()
-
-    /// Column X-anchor tolerance: a value belongs to a column if within ±0.05
-    private let columnTolerance: CGFloat = 0.05
+    private let matcher = TextPatternMatcher()
 
     /// Debug log buffer
     private var debugLog: [String] = []
 
-    // MARK: - Working Types
+    // MARK: - Internal Types
 
-    /// Normalized OCR result with original spatial data preserved
-    private struct NormalizedResult {
-        let originalText: String
-        let normalizedText: String
-        let confidence: Float
-        let midX: CGFloat
-        let midY: CGFloat
-        let box: CGRect
-        let guideRelativeResult: GuideRelativeOCRResult
+    /// A row of OCR results with joined text for pattern matching
+    private struct RowData {
+        let index: Int
+        let joinedText: String          // Fragments joined with spaces
+        let normalizedText: String      // After normalize()
+        let fragments: [GuideRelativeOCRResult]
     }
 
-    /// Detected landmark with its position
-    private struct DetectedLandmark {
-        let type: TextPatternMatcher.Landmark
-        let midX: CGFloat
-        let midY: CGFloat
-    }
-
-    /// Column X-anchors derived from header landmarks
-    private struct ColumnAnchors {
-        var timeX: CGFloat?
-        var metersX: CGFloat?
-        var splitX: CGFloat?
-        var rateX: CGFloat?
-        var headerY: CGFloat?
+    /// Column types for data rows
+    private enum Column {
+        case time, meters, split, rate, heartRate, unknown
     }
 
     // MARK: - Public API
@@ -60,136 +42,195 @@ class TableParserService {
         debugLog = []
         var table = RecognizedTable()
 
+        log("=== STARTING OCR PARSING ===")
+        log("Total OCR observations: \(results.count)")
+
         guard !results.isEmpty else {
-            log("⚠️ No OCR results to parse")
+            log("No OCR results to parse")
             return (table, debugLog.joined(separator: "\n"))
         }
 
-        log("🚀 Starting parser with \(results.count) OCR results")
-
-        // Step 0: Normalize all text
-        let normalized = results.map { result -> NormalizedResult in
-            NormalizedResult(
-                originalText: result.text,
-                normalizedText: matcher.normalize(result.text),
-                confidence: result.confidence,
-                midX: result.guideRelativeBox.midX,
-                midY: result.guideRelativeBox.midY,
-                box: result.guideRelativeBox,
-                guideRelativeResult: result
-            )
+        // Log raw OCR results
+        log("\n--- RAW OCR RESULTS ---")
+        for (idx, result) in results.enumerated() {
+            let box = result.guideRelativeBox
+            log("[\(idx)] '\(result.text)' | conf: \(String(format: "%.3f", result.confidence)) | y: \(String(format: "%.3f", box.origin.y)) | x: \(String(format: "%.3f", box.origin.x))-\(String(format: "%.3f", box.origin.x + box.size.width))")
         }
 
-        log("\n📝 Step 0: Normalize text")
-        for n in normalized {
-            if n.originalText != n.normalizedText {
-                log("  \"\(n.originalText)\" → \"\(n.normalizedText)\" at X=\(String(format: "%.2f", n.midX)) Y=\(String(format: "%.2f", n.midY))")
-            }
-        }
-        log("  ✓ Normalized \(normalized.count) results")
+        // Phase 1: Group into rows and build RowData
+        log("\n=== PHASE 1: GROUPING INTO ROWS ===")
+        let rawRows = boxAnalyzer.groupIntoRows(results)
+        log("Grouped \(results.count) observations into \(rawRows.count) rows by Y-coordinate clustering")
 
-        // Step 1: Find landmarks
-        let landmarks = findLandmarks(normalized)
-
-        log("\n🔍 Step 1: Find landmarks")
-        if landmarks.isEmpty {
-            log("  ⚠️ No landmarks found")
-        } else {
-            for lm in landmarks {
-                log("  • \(lm.type) at X=\(String(format: "%.2f", lm.midX)) Y=\(String(format: "%.2f", lm.midY))")
-            }
-        }
-
-        // Step 2: Establish column X-anchors
-        let anchors = establishColumnAnchors(landmarks)
-
-        log("\n⚓️ Step 2: Establish column X-anchors")
-        log("  timeX = \(anchors.timeX.map { String(format: "%.2f", $0) } ?? "nil")")
-        log("  metersX = \(anchors.metersX.map { String(format: "%.2f", $0) } ?? "nil")")
-        log("  splitX = \(anchors.splitX.map { String(format: "%.2f", $0) } ?? "nil")")
-        log("  rateX = \(anchors.rateX.map { String(format: "%.2f", $0) } ?? "nil")")
-        log("  headerY = \(anchors.headerY.map { String(format: "%.2f", $0) } ?? "nil")")
-
-        // Step 3: Group into rows
-        let rows = boxAnalyzer.groupIntoRows(results)
-
-        log("\n📋 Step 3: Group into rows")
-        log("  Found \(rows.count) rows")
-        for (i, row) in rows.enumerated().prefix(10) {
-            let texts = row.map { "\"\($0.text)\"" }.joined(separator: ", ")
-            log("  Row \(i) (Y≈\(String(format: "%.2f", row.first?.guideRelativeBox.midY ?? 0))): \(texts)")
-        }
-        if rows.count > 10 {
-            log("  ... (\(rows.count - 10) more rows)")
-        }
-
-        // Step 4: Extract workout type
-        log("\n💪 Step 4: Extract workout type")
-        table.workoutType = extractWorkoutType(from: normalized, landmarks: landmarks)
-        if let wt = table.workoutType {
-            log("  ✓ Found: \"\(wt)\"")
-        } else {
-            log("  ⚠️ Not found")
-        }
-
-        // Step 5: Extract date
-        log("\n📅 Step 5: Extract date")
-        table.date = extractDate(from: normalized, rows: rows)
-        if let date = table.date {
-            let formatter = DateFormatter()
-            formatter.dateFormat = "MMM dd yyyy"
-            log("  ✓ Found: \(formatter.string(from: date))")
-        } else {
-            log("  ⚠️ Not found")
-        }
-
-        // Step 6: Extract total time
-        log("\n⏱️ Step 6: Extract total time")
-        table.totalTime = extractTotalTime(from: normalized, landmarks: landmarks)
-        if let tt = table.totalTime {
-            log("  ✓ Found: \"\(tt)\"")
-        } else {
-            log("  ⚠️ Not found")
-        }
-
-        // Step 7 & 9: Extract data rows (skipping junk), assign to columns
-        log("\n🔢 Step 7: Extract data rows")
-        let headerY = anchors.headerY ?? 0.0
-        log("  Header Y threshold: \(String(format: "%.2f", headerY))")
-        var dataRows: [TableRow] = []
-
+        let rows = prepareRows(rawRows)
+        log("\n--- PREPARED ROWS WITH NORMALIZATION ---")
         for row in rows {
-            guard let firstY = row.first?.guideRelativeBox.midY else { continue }
-            // Only process rows below the header
-            guard firstY > headerY + 0.02 else { continue }
-
-            if let tableRow = extractDataRow(from: row, anchors: anchors) {
-                dataRows.append(tableRow)
+            let yPos = row.fragments.first?.guideRelativeBox.midY ?? 0
+            log("Row \(row.index) (Y≈\(String(format: "%.3f", yPos)))")
+            log("  Raw:        \"\(row.joinedText)\"")
+            log("  Normalized: \"\(row.normalizedText)\"")
+            if row.joinedText != row.normalizedText {
+                log("  [Normalization changed text]")
             }
         }
-        log("  ✓ Extracted \(dataRows.count) valid data rows")
 
-        // Step 8: Assemble — first data row = averages, rest = intervals
-        log("\n🏗️ Step 8: Assemble result")
-        if let first = dataRows.first {
-            table.averages = first
-            table.rows = Array(dataRows.dropFirst())
-            log("  ✓ Averages row assigned")
-            log("  ✓ \(table.rows.count) interval rows assigned")
+        // Phase 2: Find "View Detail" anchor
+        log("\n=== PHASE 2: FINDING 'VIEW DETAIL' ANCHOR ===")
+        guard let anchorIndex = findViewDetailRow(rows) else {
+            log("❌ FAILED: View Detail landmark not found in any row")
+            return (table, debugLog.joined(separator: "\n"))
+        }
+        log("✓ Found 'View Detail' anchor at row \(anchorIndex)")
+
+        // Phase 3: Extract descriptor and classify workout
+        log("\n=== PHASE 3: EXTRACT DESCRIPTOR & CLASSIFY WORKOUT ===")
+        let descriptorIndex = anchorIndex + 1
+        if descriptorIndex < rows.count {
+            let descriptor = extractDescriptor(from: rows[descriptorIndex])
+            table.description = descriptor
+            log("Examining row \(descriptorIndex) for workout descriptor...")
+            log("Extracted descriptor: \"\(descriptor ?? "nil")\"")
+
+            if let desc = descriptor {
+                // Try interval classification first
+                log("Attempting to parse as interval workout...")
+                if let interval = matcher.parseIntervalWorkout(desc) {
+                    table.category = .interval
+                    table.workoutType = desc
+                    table.reps = interval.reps
+                    table.workPerRep = interval.workTime
+                    table.restPerRep = interval.restTime
+                    log("✓ Classified as INTERVALS")
+                    log("  Reps: \(interval.reps)")
+                    log("  Work per rep: \(interval.workTime)")
+                    log("  Rest per rep: \(interval.restTime)")
+                } else {
+                    log("Not an interval pattern, checking general workout type...")
+                    if matcher.matchWorkoutType(desc) {
+                        table.category = matcher.detectWorkoutCategory(desc)
+                        table.workoutType = desc
+                        let categoryName = table.category == .interval ? "INTERVALS" : "SINGLE"
+                        log("✓ Classified as \(categoryName) (via category detection)")
+                        log("  Descriptor: \(desc)")
+                    } else {
+                        // Store descriptor even if can't classify yet
+                        table.workoutType = desc
+                        log("⚠️ Unclassified descriptor - will attempt fallback classification later")
+                    }
+                }
+            } else {
+                log("⚠️ No descriptor found in row \(descriptorIndex)")
+            }
         } else {
-            log("  ⚠️ No data rows found")
+            log("⚠️ Descriptor row \(descriptorIndex) is out of bounds")
         }
 
-        // Detect category
-        if let workoutType = table.workoutType {
-            table.category = matcher.detectWorkoutCategory(workoutType)
+        // Phase 4: Extract date and total time
+        log("\n=== PHASE 4: EXTRACT DATE & TOTAL TIME ===")
+        let metadataIndex = anchorIndex + 2
+        if metadataIndex < rows.count {
+            log("Examining row \(metadataIndex) for metadata...")
+            let (date, totalTime) = extractDateAndTime(from: rows[metadataIndex])
+            table.date = date
+            table.totalTime = totalTime
+            if let d = date {
+                let formatter = DateFormatter()
+                formatter.dateStyle = .medium
+                log("✓ Date found: \(formatter.string(from: d))")
+            } else {
+                log("⚠️ No date found")
+            }
+            if let tt = totalTime {
+                log("✓ Total time found: \(tt)")
+            } else {
+                log("⚠️ No total time found")
+            }
+        } else {
+            log("⚠️ Metadata row \(metadataIndex) is out of bounds")
         }
 
-        // Calculate confidence
+        // Phase 5: Determine column order from header row
+        log("\n=== PHASE 5: DETERMINE COLUMN ORDER ===")
+        let headerIndex = anchorIndex + 3
+        var columnOrder: [Column] = []
+        if headerIndex < rows.count {
+            log("Examining row \(headerIndex) for column headers...")
+            columnOrder = determineColumnOrder(from: rows[headerIndex])
+            if !columnOrder.isEmpty {
+                log("✓ Detected column order: \(columnOrder.map { "\($0)" }.joined(separator: " | "))")
+            } else {
+                log("⚠️ No column headers detected")
+            }
+        } else {
+            log("⚠️ Header row \(headerIndex) is out of bounds")
+        }
+        if columnOrder.isEmpty {
+            columnOrder = [.time, .meters, .split, .rate]
+            log("Using default column order: time | meters | split | rate")
+        }
+
+        // Phase 6: Parse summary/averages row (first data row)
+        log("\n=== PHASE 6: PARSE SUMMARY ROW ===")
+        let summaryIndex = anchorIndex + 4
+        if summaryIndex < rows.count {
+            log("Parsing summary row \(summaryIndex)...")
+            if let avg = parseDataRow(rows[summaryIndex], columnOrder: columnOrder) {
+                table.averages = avg
+                log("✓ Summary row parsed:")
+                log("  Time:  \(avg.time?.text ?? "-")")
+                log("  Meters: \(avg.meters?.text ?? "-")")
+                log("  Split: \(avg.splitPer500m?.text ?? "-")")
+                log("  Rate:  \(avg.strokeRate?.text ?? "-")")
+            } else {
+                log("❌ Failed to parse summary row (insufficient fields)")
+            }
+        } else {
+            log("⚠️ Summary row \(summaryIndex) is out of bounds")
+        }
+
+        // Phase 7: Parse data rows (intervals or splits)
+        log("\n=== PHASE 7: PARSE DATA ROWS ===")
+        let dataStartIndex = anchorIndex + 5
+        var dataRows: [TableRow] = []
+        log("Parsing data rows starting from row \(dataStartIndex)...")
+        for i in dataStartIndex..<rows.count {
+            if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
+                dataRows.append(row)
+                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
+            } else {
+                log("  Row \(i): skipped (insufficient fields)")
+            }
+        }
+        table.rows = dataRows
+        log("Parsed \(dataRows.count) data rows total")
+
+        // Phase 8: Fallback classification if descriptor was unreadable
+        log("\n=== PHASE 8: FALLBACK CLASSIFICATION ===")
+        if table.category == nil && !dataRows.isEmpty {
+            log("Category not determined from descriptor, using fallback classification...")
+            table.category = fallbackClassification(summaryRow: table.averages, dataRows: dataRows)
+            log("✓ Fallback result: \(table.category?.rawValue ?? "nil")")
+        } else if table.category != nil {
+            log("Category already determined: \(table.category!.rawValue)")
+        } else {
+            log("No data rows to classify")
+        }
+
+        // Phase 9: Compute total distance and confidence
+        log("\n=== PHASE 9: COMPUTE TOTALS & CONFIDENCE ===")
+        table.totalDistance = computeTotalDistance(summary: table.averages, dataRows: dataRows)
+        if let dist = table.totalDistance {
+            log("Total distance: \(dist)m")
+        } else {
+            log("Total distance: not available")
+        }
         table.averageConfidence = calculateAverageConfidence(table)
+        log("Average confidence: \(String(format: "%.1f%%", table.averageConfidence * 100))")
 
-        log("\n✅ Parsing complete")
-        log("  Confidence: \(String(format: "%.0f%%", table.averageConfidence * 100))")
+        log("\n=== PARSING COMPLETE ===")
+        log("Data rows: \(dataRows.count)")
+        log("Category: \(table.category?.rawValue ?? "unknown")")
+        log("Overall confidence: \(String(format: "%.0f%%", table.averageConfidence * 100))")
 
         return (table, debugLog.joined(separator: "\n"))
     }
@@ -200,383 +241,421 @@ class TableParserService {
         debugLog.append(message)
     }
 
-    // MARK: - Step 1: Find Landmarks
+    // MARK: - Phase 1: Row Preparation
 
-    private func findLandmarks(_ results: [NormalizedResult]) -> [DetectedLandmark] {
-        var landmarks: [DetectedLandmark] = []
-
-        for result in results {
-            // Try original text first, then normalized
-            if let lm = matcher.matchLandmark(result.originalText) {
-                landmarks.append(DetectedLandmark(type: lm, midX: result.midX, midY: result.midY))
-            } else if let lm = matcher.matchLandmark(result.normalizedText) {
-                landmarks.append(DetectedLandmark(type: lm, midX: result.midX, midY: result.midY))
-            }
+    private func prepareRows(_ rawRows: [[GuideRelativeOCRResult]]) -> [RowData] {
+        rawRows.enumerated().map { (index, fragments) in
+            let joined = fragments.map { $0.text }.joined(separator: " ")
+            let normalized = matcher.normalize(joined)
+            return RowData(
+                index: index,
+                joinedText: joined,
+                normalizedText: normalized,
+                fragments: fragments
+            )
         }
-
-        // Filter split500m landmarks: only keep those on same Y-level as time/meter headers
-        // AND to the right of the meter landmark
-        let headerLandmarks = landmarks.filter { $0.type == .time || $0.type == .meter }
-        if !headerLandmarks.isEmpty {
-            let avgHeaderY = headerLandmarks.map { $0.midY }.reduce(0, +) / CGFloat(headerLandmarks.count)
-            let meterLandmark = landmarks.first { $0.type == .meter }
-
-            landmarks = landmarks.filter { lm in
-                if lm.type == .split500m {
-                    // Check Y-level: must be on same row as headers (±0.03)
-                    let onHeaderRow = abs(lm.midY - avgHeaderY) < 0.03
-                    // Check X-position: must be at least 0.05 to the right of meter landmark
-                    let rightOfMeter = meterLandmark.map { lm.midX > $0.midX + 0.05 } ?? true
-                    return onHeaderRow && rightOfMeter
-                }
-                return true
-            }
-        }
-
-        return landmarks
     }
 
-    // MARK: - Step 2: Establish Column Anchors
+    // MARK: - Phase 2: Landmark Detection
 
-    private func establishColumnAnchors(_ landmarks: [DetectedLandmark]) -> ColumnAnchors {
-        var anchors = ColumnAnchors()
+    private func findViewDetailRow(_ rows: [RowData]) -> Int? {
+        for row in rows {
+            // Check joined text
+            let joinedMatch = matcher.matchLandmark(row.joinedText)
+            let normalizedMatch = matcher.matchLandmark(row.normalizedText)
 
-        var headerCandidateYs: [CGFloat] = []
+            log("Checking row \(row.index): '\(row.joinedText)'")
 
-        for lm in landmarks {
-            switch lm.type {
+            if joinedMatch == .viewDetail {
+                log("  ✓ Match on joined text")
+                return row.index
+            }
+            if normalizedMatch == .viewDetail {
+                log("  ✓ Match on normalized text")
+                return row.index
+            }
+
+            // Check individual fragments
+            for fragment in row.fragments {
+                let norm = matcher.normalize(fragment.text)
+                if matcher.matchLandmark(fragment.text) == .viewDetail {
+                    log("  ✓ Match on fragment: '\(fragment.text)'")
+                    return row.index
+                }
+                if matcher.matchLandmark(norm) == .viewDetail {
+                    log("  ✓ Match on normalized fragment: '\(norm)'")
+                    return row.index
+                }
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Phase 3: Descriptor Extraction
+
+    private func extractDescriptor(from row: RowData) -> String? {
+        log("Trying to extract descriptor from row fragments...")
+
+        // Try each fragment individually (normalized)
+        for (idx, fragment) in row.fragments.enumerated() {
+            let normalized = matcher.normalize(fragment.text)
+            log("  Fragment \(idx): '\(fragment.text)' -> normalized: '\(normalized)'")
+
+            // Fix common comma: "3x4:00,3:00r" → "3x4:00/3:00r"
+            let fixed = normalized.replacingOccurrences(of: ",", with: "/")
+            if fixed != normalized {
+                log("    Comma-fixed: '\(fixed)'")
+            }
+
+            if matcher.matchWorkoutType(fixed) {
+                log("    ✓ Matches workout type pattern (comma-fixed)")
+                return fixed
+            }
+            if matcher.matchWorkoutType(normalized) {
+                log("    ✓ Matches workout type pattern")
+                return normalized
+            }
+        }
+
+        // Try the joined normalized text
+        log("Trying joined text: '\(row.normalizedText)'")
+        let fixed = row.normalizedText.replacingOccurrences(of: ",", with: "/")
+        if fixed != row.normalizedText {
+            log("  Comma-fixed joined: '\(fixed)'")
+        }
+        if matcher.matchWorkoutType(fixed) {
+            log("  ✓ Joined text matches (comma-fixed)")
+            return fixed
+        }
+        if matcher.matchWorkoutType(row.normalizedText) {
+            log("  ✓ Joined text matches")
+            return row.normalizedText
+        }
+
+        // Try splitting joined text on spaces and checking each part
+        let parts = row.normalizedText.split(separator: " ").map(String.init)
+        if parts.count > 1 {
+            log("Trying individual parts from joined text...")
+            for (idx, part) in parts.enumerated() {
+                log("  Part \(idx): '\(part)'")
+                let fixedPart = part.replacingOccurrences(of: ",", with: "/")
+                if fixedPart != part {
+                    log("    Comma-fixed: '\(fixedPart)'")
+                }
+                if matcher.matchWorkoutType(fixedPart) {
+                    log("    ✓ Matches (comma-fixed)")
+                    return fixedPart
+                }
+                if matcher.matchWorkoutType(part) {
+                    log("    ✓ Matches")
+                    return part
+                }
+            }
+        }
+
+        log("  ❌ No descriptor pattern matched")
+        return nil
+    }
+
+    // MARK: - Phase 4: Date & Time Extraction
+
+    private func extractDateAndTime(from row: RowData) -> (Date?, String?) {
+        var date: Date? = nil
+        var totalTime: String? = nil
+
+        log("Scanning fragments for date and time...")
+        // Try individual fragments first
+        for (idx, fragment) in row.fragments.enumerated() {
+            let text = fragment.text
+            let normalized = matcher.normalize(text)
+            log("  Fragment \(idx): '\(text)'")
+
+            if date == nil, let d = matcher.matchDate(text) {
+                log("    ✓ Matched as date")
+                date = d
+                continue
+            }
+            if totalTime == nil, matcher.matchTotalTime(normalized) {
+                log("    ✓ Matched as total time: '\(normalized)'")
+                totalTime = normalized
+                continue
+            }
+        }
+
+        // Try splitting the joined text if still missing fields
+        if date == nil || totalTime == nil {
+            log("Trying joined text parts...")
+            let parts = row.joinedText.split(separator: " ").map(String.init)
+            // Try combining consecutive parts for date (e.g., "Oct", "20", "2024")
+            if date == nil {
+                for i in 0..<parts.count {
+                    // Try 3-word date: "Oct 20 2024"
+                    if i + 2 < parts.count {
+                        let candidate = "\(parts[i]) \(parts[i+1]) \(parts[i+2])"
+                        log("  Trying date candidate: '\(candidate)'")
+                        if let d = matcher.matchDate(candidate) {
+                            log("    ✓ Matched as date")
+                            date = d
+                            break
+                        }
+                    }
+                }
+            }
+            // Try each part for total time
+            if totalTime == nil {
+                for part in parts {
+                    let normalized = matcher.normalize(part)
+                    if matcher.matchTotalTime(normalized) {
+                        log("  ✓ Part '\(part)' matched as total time: '\(normalized)'")
+                        totalTime = normalized
+                        break
+                    }
+                }
+            }
+        }
+
+        return (date, totalTime)
+    }
+
+    // MARK: - Phase 5: Column Order Detection
+
+    private func determineColumnOrder(from row: RowData) -> [Column] {
+        log("Analyzing header row for column positions...")
+
+        // Collect all text items with X positions
+        var items: [(text: String, midX: CGFloat)] = []
+
+        for fragment in row.fragments {
+            let normalized = matcher.normalize(fragment.text)
+            let split = matcher.splitSmooshedText(normalized)
+            log("  Fragment: '\(fragment.text)' -> normalized: '\(normalized)'")
+            if split.count > 1 {
+                log("    Split into: \(split.joined(separator: " | "))")
+            }
+
+            for (i, text) in split.enumerated() {
+                let x = fragment.guideRelativeBox.midX + CGFloat(i) * 0.001
+                items.append((text, x))
+            }
+        }
+
+        // Sort left to right
+        items.sort { $0.midX < $1.midX }
+        log("Sorted items left-to-right: \(items.map { $0.text }.joined(separator: " | "))")
+
+        // Map landmark text to column type
+        var columns: [Column] = []
+        for (text, _) in items {
+            if let landmark = matcher.matchLandmark(text) {
+                let columnType: Column
+                switch landmark {
+                case .time:
+                    columnType = .time
+                    columns.append(.time)
+                case .meter:
+                    columnType = .meters
+                    columns.append(.meters)
+                case .split500m:
+                    columnType = .split
+                    columns.append(.split)
+                case .strokeRateHeader:
+                    columnType = .rate
+                    columns.append(.rate)
+                default:
+                    continue
+                }
+                log("  '\(text)' -> \(columnType)")
+            }
+        }
+
+        // Fallback: If we have 4 items but only 3 columns detected, assume the 4th is rate
+        if items.count == 4 && columns.count == 3 && !columns.contains(.rate) {
+            log("  Fallback: Detected 4 header items but only 3 columns, adding rate as 4th column")
+            columns.append(.rate)
+        }
+
+        return columns
+    }
+
+    // MARK: - Phase 6 & 7: Data Row Parsing
+
+    private func parseDataRow(_ row: RowData, columnOrder: [Column]) -> TableRow? {
+        var tableRow = TableRow()
+        var fieldCount = 0
+
+        log("    Parsing row \(row.index): '\(row.joinedText)'")
+
+        // Build list of values from fragments, splitting smooshed text
+        var values: [(text: String, midX: CGFloat, fragment: GuideRelativeOCRResult)] = []
+
+        for fragment in row.fragments {
+            let normalized = matcher.normalize(fragment.text)
+
+            // Skip junk labels
+            if matcher.isJunk(fragment.text) || matcher.isJunk(normalized) {
+                log("      Skipping junk: '\(fragment.text)'")
+                continue
+            }
+
+            // Handle combined split+rate
+            if let combined = matcher.parseCombinedSplitRate(normalized) {
+                log("      Split combined split+rate: '\(normalized)' -> '\(combined.split)' + '\(combined.rate)'")
+                values.append((combined.split, fragment.guideRelativeBox.midX, fragment))
+                values.append((combined.rate, fragment.guideRelativeBox.midX + 0.01, fragment))
+                continue
+            }
+
+            // Split smooshed text
+            let split = matcher.splitSmooshedText(normalized)
+            if split.count > 1 {
+                log("      Split smooshed text: '\(normalized)' -> \(split.joined(separator: " | "))")
+            }
+            for (i, text) in split.enumerated() {
+                let x = fragment.guideRelativeBox.midX + CGFloat(i) * 0.001
+                values.append((text, x, fragment))
+            }
+        }
+
+        // Sort left to right
+        values.sort { $0.midX < $1.midX }
+        log("      Values (L-R): \(values.map { $0.text }.joined(separator: " | "))")
+
+        // Assign values to columns by position
+        for (i, column) in columnOrder.enumerated() {
+            guard i < values.count else { break }
+            let (text, _, fragment) = values[i]
+
+            let ocr = OCRResult(
+                text: text,
+                confidence: fragment.confidence,
+                boundingBox: fragment.original.boundingBox
+            )
+
+            switch column {
             case .time:
-                anchors.timeX = lm.midX
-                headerCandidateYs.append(lm.midY)
-            case .meter:
-                anchors.metersX = lm.midX
-                headerCandidateYs.append(lm.midY)
-            case .split500m:
-                anchors.splitX = lm.midX
-                headerCandidateYs.append(lm.midY)
-            case .strokeRateHeader:
-                anchors.rateX = lm.midX
-                headerCandidateYs.append(lm.midY)
-            default:
+                if matcher.matchTime(text) || matcher.matchSplit(text) {
+                    log("      Assigned '\(text)' to TIME")
+                    tableRow.time = ocr
+                    fieldCount += 1
+                }
+            case .meters:
+                if matcher.matchMeters(text) {
+                    log("      Assigned '\(text)' to METERS")
+                    tableRow.meters = ocr
+                    fieldCount += 1
+                }
+            case .split:
+                if matcher.matchSplit(text) || matcher.matchTime(text) {
+                    log("      Assigned '\(text)' to SPLIT")
+                    tableRow.splitPer500m = ocr
+                    fieldCount += 1
+                }
+            case .rate:
+                if matcher.matchRate(text) {
+                    log("      Assigned '\(text)' to RATE")
+                    tableRow.strokeRate = ocr
+                    fieldCount += 1
+                }
+            case .heartRate:
+                if let val = Int(text), val >= 40, val <= 220 {
+                    log("      Assigned '\(text)' to HEART RATE")
+                    tableRow.heartRate = ocr
+                    fieldCount += 1
+                }
+            case .unknown:
                 break
             }
         }
 
-        // Header Y = average Y of all header landmarks
-        if !headerCandidateYs.isEmpty {
-            anchors.headerY = headerCandidateYs.reduce(0, +) / CGFloat(headerCandidateYs.count)
+        // Calculate bounding box
+        if !row.fragments.isEmpty {
+            let boxes = row.fragments.map { $0.guideRelativeBox }
+            let minX = boxes.map { $0.minX }.min() ?? 0
+            let maxX = boxes.map { $0.maxX }.max() ?? 0
+            let minY = boxes.map { $0.minY }.min() ?? 0
+            let maxY = boxes.map { $0.maxY }.max() ?? 0
+            tableRow.boundingBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
         }
-
-        // Fallback: if no rate header found, try Total Time X + 0.02
-        if anchors.rateX == nil {
-            if let totalTimeLM = landmarks.first(where: { $0.type == .totalTime }) {
-                anchors.rateX = totalTimeLM.midX + 0.02
-            } else {
-                // Final fallback: use rightmost known header + offset, or 0.75
-                let knownXs = [anchors.timeX, anchors.metersX, anchors.splitX].compactMap { $0 }
-                if let maxX = knownXs.max() {
-                    anchors.rateX = min(maxX + 0.09, 0.90)
-                } 
-            }
-        }
-
-        return anchors
-    }
-
-    // MARK: - Step 4: Extract Workout Type
-
-    private func extractWorkoutType(
-        from results: [NormalizedResult],
-        landmarks: [DetectedLandmark]
-    ) -> String? {
-        // Find "View Detail" landmark
-        let viewDetailLM = landmarks.first { $0.type == .viewDetail }
-
-        if let vdY = viewDetailLM?.midY, let vdX = viewDetailLM?.midX {
-            // Look for text just below View Detail (Y+0.01 to Y+0.09) and within X ±0.1
-            let candidates = results.filter { r in
-                r.midY > vdY + 0.01 && r.midY < vdY + 0.09 &&
-                abs(r.midX - vdX) < 0.1
-            }
-            for candidate in candidates {
-                let text = candidate.normalizedText
-                // Normalize comma in workout type: "3x4:00,3:00r" → "3x4:00/3:00r"
-                let fixed = text.replacingOccurrences(of: ",", with: "/")
-                if matcher.matchWorkoutType(fixed) { return fixed }
-                if matcher.matchWorkoutType(text) { return text }
-            }
-        }
-
-        // Fallback: scan all results for workout type pattern
-        for result in results {
-            let text = result.normalizedText
-            let fixed = text.replacingOccurrences(of: ",", with: "/")
-            if matcher.matchWorkoutType(fixed) { return fixed }
-            if matcher.matchWorkoutType(text) { return text }
-        }
-
-        return nil
-    }
-
-    // MARK: - Step 5: Extract Date
-
-    private func extractDate(
-        from results: [NormalizedResult],
-        rows: [[GuideRelativeOCRResult]]
-    ) -> Date? {
-        // Try each result's original text (dates shouldn't be normalized)
-        for result in results {
-            if let date = matcher.matchDate(result.originalText) { return date }
-        }
-
-        // Try combining adjacent results on the same row
-        for row in rows {
-            let combined = row
-                .map { $0.text.trimmingCharacters(in: .whitespaces) }
-                .joined(separator: " ")
-            if let date = matcher.matchDate(combined) { return date }
-        }
-
-        return nil
-    }
-
-    // MARK: - Step 6: Extract Total Time
-
-    private func extractTotalTime(
-        from results: [NormalizedResult],
-        landmarks: [DetectedLandmark]
-    ) -> String? {
-        let totalTimeLM = landmarks.first { $0.type == .totalTime }
-
-        if let lm = totalTimeLM {
-            let ttY = lm.midY
-            let ttX = lm.midX
-
-            // Look for time value on same Y-level (±0.03) and to the right
-            let sameRow = results.filter { r in
-                abs(r.midY - ttY) < 0.03 && r.midX > ttX + 0.05
-            }
-            for candidate in sameRow {
-                if matcher.matchTotalTime(candidate.normalizedText) {
-                    return candidate.normalizedText
-                }
-            }
-
-            // Or next Y-level (0.03–0.06 below)
-            let nextRow = results.filter { r in
-                r.midY > ttY + 0.03 && r.midY < ttY + 0.06
-            }
-            for candidate in nextRow {
-                if matcher.matchTotalTime(candidate.normalizedText) {
-                    return candidate.normalizedText
-                }
-            }
-        }
-
-        return nil
-    }
-
-    // MARK: - Step 7: Extract Data Row
-
-    private func extractDataRow(
-        from row: [GuideRelativeOCRResult],
-        anchors: ColumnAnchors
-    ) -> TableRow? {
-        var tableRow = TableRow()
-
-        // Track bounding box
-        var minX = CGFloat.greatestFiniteMagnitude
-        var maxX: CGFloat = 0
-        var minY = CGFloat.greatestFiniteMagnitude
-        var maxY: CGFloat = 0
-
-        var hasData = 0
-
-        for result in row {
-            let normalized = matcher.normalize(result.text)
-            let midX = result.guideRelativeBox.midX
-            let box = result.guideRelativeBox
-
-            // Update row bounding box
-            minX = min(minX, box.minX)
-            maxX = max(maxX, box.maxX)
-            minY = min(minY, box.minY)
-            maxY = max(maxY, box.maxY)
-
-            // Skip junk
-            if matcher.isJunk(result.text) || matcher.isJunk(normalized) { continue }
-
-            // Check for combined split+rate
-            if let combined = matcher.parseCombinedSplitRate(normalized) {
-                if tableRow.splitPer500m == nil {
-                    tableRow.splitPer500m = OCRResult(
-                        text: combined.split,
-                        confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-                if tableRow.strokeRate == nil {
-                    tableRow.strokeRate = OCRResult(
-                        text: combined.rate,
-                        confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-                continue
-            }
-
-            // Assign to column by X-anchor proximity
-            let column = classifyColumn(midX: midX, anchors: anchors)
-
-            switch column {
-            case .time:
-                if tableRow.time == nil && (matcher.matchTime(normalized) || matcher.matchSplit(normalized)) {
-                    tableRow.time = OCRResult(
-                        text: normalized, confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-
-            case .meters:
-                if tableRow.meters == nil && matcher.matchMeters(normalized) {
-                    tableRow.meters = OCRResult(
-                        text: normalized, confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-
-            case .split:
-                if tableRow.splitPer500m == nil && (matcher.matchSplit(normalized) || matcher.matchTime(normalized)) {
-                    tableRow.splitPer500m = OCRResult(
-                        text: normalized, confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-
-            case .rate:
-                if tableRow.strokeRate == nil && matcher.matchRate(normalized) {
-                    tableRow.strokeRate = OCRResult(
-                        text: normalized, confidence: result.confidence,
-                        boundingBox: result.original.boundingBox
-                    )
-                    hasData += 1
-                }
-
-            case .unknown:
-                // Try pattern-based fallback when no column anchors matched
-                assignByPattern(
-                    normalized: normalized, result: result,
-                    into: &tableRow, hasData: &hasData, anchors: anchors
-                )
-            }
-        }
-
-        tableRow.boundingBox = CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
 
         // Require at least 2 populated fields
-        return hasData >= 2 ? tableRow : nil
+        if fieldCount >= 2 {
+            log("      ✓ Row valid (\(fieldCount) fields)")
+            return tableRow
+        } else {
+            log("      ❌ Row invalid (only \(fieldCount) fields)")
+            return nil
+        }
     }
 
-    // MARK: - Column Classification
+    // MARK: - Phase 8: Fallback Classification
 
-    private enum Column {
-        case time, meters, split, rate, unknown
+    /// If descriptor was unreadable, classify by analyzing data row patterns
+    private func fallbackClassification(summaryRow: TableRow?, dataRows: [TableRow]) -> WorkoutCategory {
+        guard let summary = summaryRow, let summaryTime = summary.time?.text,
+              let firstData = dataRows.first, let firstTime = firstData.time?.text else {
+            return .single
+        }
+
+        // If summary time is significantly larger than first data row time, likely intervals
+        let summarySeconds = approximateSeconds(summaryTime)
+        let firstSeconds = approximateSeconds(firstTime)
+
+        if summarySeconds > 0 && firstSeconds > 0 && summarySeconds > firstSeconds * 1.5 {
+            return .interval
+        }
+
+        return .single
     }
 
-    private func classifyColumn(midX: CGFloat, anchors: ColumnAnchors) -> Column {
-        var bestColumn: Column = .unknown
-        var bestDistance: CGFloat = columnTolerance
-
-        if let tx = anchors.timeX, abs(midX - tx) < bestDistance {
-            bestDistance = abs(midX - tx)
-            bestColumn = .time
-        }
-        if let mx = anchors.metersX, abs(midX - mx) < bestDistance {
-            bestDistance = abs(midX - mx)
-            bestColumn = .meters
-        }
-        if let sx = anchors.splitX, abs(midX - sx) < bestDistance {
-            bestDistance = abs(midX - sx)
-            bestColumn = .split
-        }
-        if let rx = anchors.rateX, abs(midX - rx) < bestDistance {
-            bestDistance = abs(midX - rx)
-            bestColumn = .rate
-        }
-
-        return bestColumn
-    }
-
-    /// Fallback: assign by pattern when column anchors don't match
-    private func assignByPattern(
-        normalized: String,
-        result: GuideRelativeOCRResult,
-        into row: inout TableRow,
-        hasData: inout Int,
-        anchors: ColumnAnchors
-    ) {
-        let ocr = OCRResult(
-            text: normalized, confidence: result.confidence,
-            boundingBox: result.original.boundingBox
-        )
-
-        if row.meters == nil && matcher.matchMeters(normalized) {
-            row.meters = ocr
-            hasData += 1
-        } else if row.strokeRate == nil && matcher.matchRate(normalized) {
-            row.strokeRate = ocr
-            hasData += 1
-        } else if matcher.matchTime(normalized) || matcher.matchSplit(normalized) {
-            // Disambiguate time vs split by X position relative to anchors
-            let midX = result.guideRelativeBox.midX
-            let timeX = anchors.timeX ?? 0.2
-            let splitX = anchors.splitX ?? 0.6
-            let distToTime = abs(midX - timeX)
-            let distToSplit = abs(midX - splitX)
-
-            if distToTime < distToSplit && row.time == nil {
-                row.time = ocr
-                hasData += 1
-            } else if row.splitPer500m == nil {
-                row.splitPer500m = ocr
-                hasData += 1
+    /// Rough conversion of time string to seconds for comparison
+    private func approximateSeconds(_ timeStr: String) -> Double {
+        let parts = timeStr.replacingOccurrences(of: ".", with: ":").split(separator: ":")
+        var seconds = 0.0
+        for (i, part) in parts.reversed().enumerated() {
+            if let val = Double(part) {
+                switch i {
+                case 0: seconds += val         // seconds or tenths
+                case 1: seconds += val * 60    // minutes or seconds
+                case 2: seconds += val * 3600  // hours or minutes
+                case 3: seconds += val * 3600  // hours
+                default: break
+                }
             }
         }
+        return seconds
     }
 
-    // MARK: - Confidence Calculation
+    // MARK: - Phase 9: Totals & Confidence
+
+    private func computeTotalDistance(summary: TableRow?, dataRows: [TableRow]) -> Int? {
+        // Try summary row first
+        if let metersText = summary?.meters?.text, let meters = Int(metersText) {
+            return meters
+        }
+        // Sum data rows
+        let sum = dataRows.compactMap { row -> Int? in
+            guard let text = row.meters?.text else { return nil }
+            return Int(text)
+        }.reduce(0, +)
+        return sum > 0 ? sum : nil
+    }
 
     private func calculateAverageConfidence(_ table: RecognizedTable) -> Double {
         var allRows = table.rows
         if let avg = table.averages { allRows.append(avg) }
 
-        var confidenceSum = 0.0
+        var sum = 0.0
         var count = 0
 
         for row in allRows {
-            if let time = row.time {
-                confidenceSum += Double(time.confidence)
-                count += 1
-            }
-            if let meters = row.meters {
-                confidenceSum += Double(meters.confidence)
-                count += 1
-            }
-            if let split = row.splitPer500m {
-                confidenceSum += Double(split.confidence)
-                count += 1
-            }
-            if let rate = row.strokeRate {
-                confidenceSum += Double(rate.confidence)
-                count += 1
+            for field in [row.time, row.meters, row.splitPer500m, row.strokeRate, row.heartRate] {
+                if let f = field {
+                    sum += Double(f.confidence)
+                    count += 1
+                }
             }
         }
 
-        return count > 0 ? confidenceSum / Double(count) : 0.0
+        return count > 0 ? sum / Double(count) : 0.0
     }
 }

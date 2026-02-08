@@ -23,8 +23,13 @@ struct RecognizedTable {
     var category: WorkoutCategory?
     var date: Date?
     var totalTime: String?
-    var averages: TableRow?         // Overall workout averages row
-    var rows: [TableRow]
+    var description: String?        // Raw descriptor string, e.g. "3x20:00/1:15r"
+    var reps: Int?                  // Interval count (nil for single)
+    var workPerRep: String?         // "20:00" or "1000m" (nil for single)
+    var restPerRep: String?         // "1:15" (nil for single)
+    var totalDistance: Int?          // Total meters
+    var averages: TableRow?         // Overall workout averages/summary row
+    var rows: [TableRow]            // Interval results or split results
     var averageConfidence: Double
 
     init(
@@ -32,6 +37,11 @@ struct RecognizedTable {
         category: WorkoutCategory? = nil,
         date: Date? = nil,
         totalTime: String? = nil,
+        description: String? = nil,
+        reps: Int? = nil,
+        workPerRep: String? = nil,
+        restPerRep: String? = nil,
+        totalDistance: Int? = nil,
         averages: TableRow? = nil,
         rows: [TableRow] = [],
         averageConfidence: Double = 0.0
@@ -40,6 +50,11 @@ struct RecognizedTable {
         self.category = category
         self.date = date
         self.totalTime = totalTime
+        self.description = description
+        self.reps = reps
+        self.workPerRep = workPerRep
+        self.restPerRep = restPerRep
+        self.totalDistance = totalDistance
         self.averages = averages
         self.rows = rows
         self.averageConfidence = averageConfidence
@@ -52,6 +67,7 @@ struct TableRow {
     var meters: OCRResult?
     var splitPer500m: OCRResult?
     var strokeRate: OCRResult?
+    var heartRate: OCRResult?
     var boundingBox: CGRect  // Entire row bounding box
 
     init(boundingBox: CGRect = .zero) {
