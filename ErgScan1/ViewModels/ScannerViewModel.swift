@@ -267,15 +267,29 @@ class ScannerViewModel: ObservableObject {
         )
         context.insert(benchmarkWorkout)
 
-        // Create BenchmarkIntervals from table rows
+        // Save averages/summary row as interval with orderIndex = 0
+        if let averages = table.averages {
+            let averagesInterval = BenchmarkInterval(
+                orderIndex: 0,
+                time: averages.time?.text,
+                meters: averages.meters.flatMap { Int($0.text) },
+                splitPer500m: averages.splitPer500m?.text,
+                strokeRate: averages.strokeRate.flatMap { Int($0.text) },
+                heartRate: averages.heartRate.flatMap { Int($0.text) }
+            )
+            averagesInterval.workout = benchmarkWorkout
+            context.insert(averagesInterval)
+        }
+
+        // Create BenchmarkIntervals from data rows (starting at orderIndex = 1)
         for (index, row) in table.rows.enumerated() {
             let benchmarkInterval = BenchmarkInterval(
-                orderIndex: index,
+                orderIndex: index + 1,  // Start at 1, since 0 is averages
                 time: row.time?.text,
-                meters: Int(row.meters?.text ?? "0"),
+                meters: row.meters.flatMap { Int($0.text) },
                 splitPer500m: row.splitPer500m?.text,
-                strokeRate: Int(row.strokeRate?.text ?? "0"),
-                heartRate: Int(row.heartRate?.text ?? "0")
+                strokeRate: row.strokeRate.flatMap { Int($0.text) },
+                heartRate: row.heartRate.flatMap { Int($0.text) }
             )
             benchmarkInterval.workout = benchmarkWorkout
             context.insert(benchmarkInterval)

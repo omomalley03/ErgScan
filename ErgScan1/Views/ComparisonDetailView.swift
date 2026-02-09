@@ -130,42 +130,38 @@ struct ComparisonDetailView: View {
                 .font(.headline)
                 .foregroundColor(.primary)
 
+            // Extract ground truth averages (orderIndex = 0)
+            let gtAverages = groundTruth.intervals.first(where: { $0.orderIndex == 0 })
+
             if let parsedAvg = parsed.averages {
-                // Note: Ground truth doesn't have an averages row, so we'll show parsed vs nil
-                // In a real implementation, you might want to calculate expected averages from intervals
                 ComparisonRow(
                     label: "Time",
-                    groundTruth: nil,
-                    parsed: parsedAvg.time?.text,
-                    note: "Average not in ground truth"
+                    groundTruth: gtAverages?.time,
+                    parsed: parsedAvg.time?.text
                 )
 
                 ComparisonRow(
                     label: "Meters",
-                    groundTruth: nil,
-                    parsed: parsedAvg.meters?.text,
-                    note: "Average not in ground truth"
+                    groundTruth: gtAverages?.meters.map { String($0) },
+                    parsed: parsedAvg.meters?.text
                 )
 
                 ComparisonRow(
                     label: "Split",
-                    groundTruth: nil,
-                    parsed: parsedAvg.splitPer500m?.text,
-                    note: "Average not in ground truth"
+                    groundTruth: gtAverages?.splitPer500m,
+                    parsed: parsedAvg.splitPer500m?.text
                 )
 
                 ComparisonRow(
                     label: "Rate",
-                    groundTruth: nil,
-                    parsed: parsedAvg.strokeRate?.text,
-                    note: "Average not in ground truth"
+                    groundTruth: gtAverages?.strokeRate.map { String($0) },
+                    parsed: parsedAvg.strokeRate?.text
                 )
 
                 ComparisonRow(
                     label: "Heart Rate",
-                    groundTruth: nil,
-                    parsed: parsedAvg.heartRate?.text,
-                    note: "Average not in ground truth"
+                    groundTruth: gtAverages?.heartRate.map { String($0) },
+                    parsed: parsedAvg.heartRate?.text
                 )
             } else {
                 Text("No averages row detected")
@@ -185,7 +181,10 @@ struct ComparisonDetailView: View {
                 .font(.headline)
                 .foregroundColor(.primary)
 
-            let gtIntervals = groundTruth.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+            // Filter out averages row (orderIndex = 0), only show data rows
+            let gtIntervals = groundTruth.intervals
+                .filter { $0.orderIndex >= 1 }
+                .sorted(by: { $0.orderIndex < $1.orderIndex })
 
             ForEach(Array(gtIntervals.enumerated()), id: \.offset) { index, gtInterval in
                 VStack(alignment: .leading, spacing: 8) {

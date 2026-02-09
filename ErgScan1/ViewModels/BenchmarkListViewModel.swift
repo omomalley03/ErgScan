@@ -183,9 +183,41 @@ class BenchmarkListViewModel: ObservableObject {
             if parsedTable.totalDistance == gt { matchingFields += 1 }
         }
 
-        // Compare interval data
-        let gtIntervals = groundTruth.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
-        for (index, gtInterval) in gtIntervals.enumerated() {
+        // Separate averages (orderIndex = 0) from data rows (orderIndex >= 1)
+        let sortedIntervals = groundTruth.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+        let gtAverages = sortedIntervals.first(where: { $0.orderIndex == 0 })
+        let gtDataRows = sortedIntervals.filter { $0.orderIndex >= 1 }
+
+        // Compare averages row
+        if let gtAvg = gtAverages, let parsedAvg = parsedTable.averages {
+            if let gt = gtAvg.time {
+                totalFields += 1
+                if parsedAvg.time?.text == gt { matchingFields += 1 }
+            }
+
+            if let gt = gtAvg.meters {
+                totalFields += 1
+                if parsedAvg.meters?.text == String(gt) { matchingFields += 1 }
+            }
+
+            if let gt = gtAvg.splitPer500m {
+                totalFields += 1
+                if parsedAvg.splitPer500m?.text == gt { matchingFields += 1 }
+            }
+
+            if let gt = gtAvg.strokeRate {
+                totalFields += 1
+                if parsedAvg.strokeRate?.text == String(gt) { matchingFields += 1 }
+            }
+
+            if let gt = gtAvg.heartRate {
+                totalFields += 1
+                if parsedAvg.heartRate?.text == String(gt) { matchingFields += 1 }
+            }
+        }
+
+        // Compare data rows
+        for (index, gtInterval) in gtDataRows.enumerated() {
             guard index < parsedTable.rows.count else { continue }
             let parsedRow = parsedTable.rows[index]
 
