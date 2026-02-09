@@ -88,6 +88,36 @@ struct TextPatternMatcher {
             }
         }
 
+        // 5. Fix slash-read-as-1: After inserting "/" (or if "/" already present),
+        // check if the rest portion starts with "1" that is actually a misread "/".
+        // Pattern: after "NxWORK/", if rest starts with "1" followed by a valid
+        // shorter rest time, strip the leading "1".
+        // Example: "2x20:00/11:15r" → "2x20:00/1:15r" (the first "1" was the slash)
+        // Example: "5x1000m/17:00r" → "5x1000m/7:00r"
+        if let slashRange = result.range(of: "/", options: .literal) {
+            let afterSlash = String(result[slashRange.upperBound...])
+
+            // Only apply if rest part starts with "1" and the resulting rest time
+            // exceeds the PM5 maximum rest time of 9:55.
+            // If rest is ≥10:00, the leading "1" is definitely a misread "/".
+            if afterSlash.hasPrefix("1") {
+                // Parse the rest time minutes (everything before the ":")
+                // e.g., "11:15r" → minutes = 11, "13:00r" → minutes = 13
+                let restTimePattern = #"^(\d+):\d{2}r?$"#
+                if let regex = try? NSRegularExpression(pattern: restTimePattern),
+                   let match = regex.firstMatch(in: afterSlash, range: NSRange(afterSlash.startIndex..., in: afterSlash)),
+                   let minutesRange = Range(match.range(at: 1), in: afterSlash),
+                   let minutes = Int(afterSlash[minutesRange]),
+                   minutes >= 10 {
+                    // Rest ≥10:00 is impossible on PM5 (max is 9:55).
+                    // Strip the leading "1" — it was the misread "/".
+                    let withoutLeading1 = String(afterSlash.dropFirst())
+                    let beforeSlash = String(result[..<slashRange.upperBound])
+                    result = beforeSlash + withoutLeading1
+                }
+            }
+        }
+
         return result
     }
 

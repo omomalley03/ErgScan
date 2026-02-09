@@ -265,6 +265,23 @@ class TableParserService {
                 log("  Row \(i): skipped (insufficient fields)")
             }
         }
+        // --- Coast tail detection (after Phase 7) ---
+        // On single-piece workouts, the PM5 sometimes records a final partial row
+        // after the rower stops (very low rate, few meters). Drop it.
+        if dataRows.count >= 2 {
+            let lastRow = dataRows.last!
+            let otherRows = dataRows.dropLast()
+
+            let lastHasRate = lastRow.strokeRate != nil
+            let othersWithRate = otherRows.filter { $0.strokeRate != nil }.count
+
+            if !lastHasRate && othersWithRate == otherRows.count {
+                // Every other row has a valid rate, but the last one doesn't.
+                // This is a coast/cooldown tail — remove it.
+                log("  Removing coast tail row: time=\(lastRow.time?.text ?? "-"), rate=nil (all other rows have valid rates)")
+                dataRows.removeLast()
+            }
+        }
         table.rows = dataRows
         log("Parsed \(dataRows.count) data rows total")
 
@@ -396,6 +413,18 @@ class TableParserService {
                 if matcher.matchWorkoutType(normalizedPart) {
                     log("    ✓ Matches")
                     return normalizedPart
+                }
+            }
+
+            // Try combining adjacent space-separated parts that look like split descriptor
+            // e.g., "2x20:00" + "11:15r" → "2x20:0011:15r" → normalizeDescriptor → "2x20:00/1:15r"
+            if parts.count == 2 {
+                let combined = parts[0] + parts[1]
+                let normalizedCombined = matcher.normalizeDescriptor(combined)
+                log("  Trying combined parts: '\(combined)' -> '\(normalizedCombined)'")
+                if matcher.matchWorkoutType(normalizedCombined) {
+                    log("    ✓ Combined parts match")
+                    return normalizedCombined
                 }
             }
         }
