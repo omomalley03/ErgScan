@@ -98,6 +98,7 @@ struct EnhancedWorkoutDetailView: View {
         } else if !sortedIntervals.isEmpty {
             SplitsListView(
                 intervals: sortedIntervals,
+                workoutType: workout.workoutType,
                 fastestId: fastestInterval?.id,
                 slowestId: slowestInterval?.id
             )
@@ -320,20 +321,49 @@ struct LargeDataField: View {
 
 struct SplitsListView: View {
     let intervals: [Interval]
+    let workoutType: String
     let fastestId: UUID?
     let slowestId: UUID?
 
+    private var isDistanceBased: Bool {
+        // Check if workout type ends with "m" (e.g., "2000m", "5000m")
+        workoutType.trimmingCharacters(in: .whitespaces).hasSuffix("m")
+    }
+
+    private var splitInterval: String {
+        guard let firstInterval = intervals.first else {
+            return "500m"  // Default fallback
+        }
+
+        if isDistanceBased {
+            // Distance-based split (e.g., "400" -> "400m")
+            if let metersValue = Int(firstInterval.meters.trimmingCharacters(in: .whitespaces)),
+               metersValue > 0 {
+                return "\(metersValue)m"
+            }
+            return "500m"  // Default distance split
+        } else {
+            // Time-based split (e.g., "6:00.0" -> "6:00")
+            let timeValue = firstInterval.time.trimmingCharacters(in: .whitespaces)
+            // Remove trailing .0 or decimal for cleaner display
+            if let dotIndex = timeValue.firstIndex(of: ".") {
+                return String(timeValue[..<dotIndex])
+            }
+            return timeValue
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("SPLITS (500m)")
+            Text("SPLITS")// (\(splitInterval))")
                 .font(.headline)
                 .fontWeight(.bold)
 
             VStack(spacing: 8) {
                 ForEach(Array(intervals.enumerated()), id: \.element.id) { index, interval in
                     SplitRow(
-                        number: index + 1,
                         interval: interval,
+                        isDistanceBased: isDistanceBased,
                         isFastest: interval.id == fastestId,
                         isSlowest: interval.id == slowestId
                     )
@@ -383,18 +413,33 @@ struct SplitsListView: View {
 }
 
 struct SplitRow: View {
-    let number: Int
     let interval: Interval
+    let isDistanceBased: Bool
     let isFastest: Bool
     let isSlowest: Bool
 
+    private var splitLabel: String {
+        if isDistanceBased {
+            // Show distance (e.g., "400m", "800m")
+            return interval.meters.trimmingCharacters(in: .whitespaces) + "m"
+        } else {
+            // Show time (e.g., "6:00", "12:00") - remove decimal
+            let timeValue = interval.time.trimmingCharacters(in: .whitespaces)
+            if let dotIndex = timeValue.firstIndex(of: ".") {
+                return String(timeValue[..<dotIndex])
+            }
+            return timeValue
+        }
+    }
+
     var body: some View {
         HStack(spacing: 12) {
-            Text("#\(number)")
-                .font(.caption)
-                .fontWeight(.bold)
-                .foregroundColor(.secondary)
-                .frame(width: 30, alignment: .leading)
+            Text(splitLabel)
+                .font(.body)
+                .fontWeight(.semibold)
+                .foregroundColor(.primary)
+                .monospacedDigit()
+                .frame(width: 60, alignment: .leading)
 
             Text(interval.splitPer500m)
                 .font(.body)

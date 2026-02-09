@@ -6,7 +6,7 @@ import ImageIO
 import UniformTypeIdentifiers
 
 /// Generates a minimalist app icon for ErgScan
-/// Design: Clipboard with rowing machine line art on a gradient background
+/// Design: Red background with white hardhat icon
 
 func generateAppIcon(size: Int) -> CGImage? {
     let dimension = CGFloat(size)
@@ -26,10 +26,10 @@ func generateAppIcon(size: Int) -> CGImage? {
 
     let rect = CGRect(x: 0, y: 0, width: dimension, height: dimension)
 
-    // Background: Blue gradient (lighter to darker)
+    // Background: Red gradient (lighter to darker)
     let gradientColors = [
-        CGColor(red: 0.2, green: 0.6, blue: 1.0, alpha: 1.0),  // Light blue
-        CGColor(red: 0.1, green: 0.4, blue: 0.8, alpha: 1.0)   // Darker blue
+        CGColor(red: 0.95, green: 0.3, blue: 0.3, alpha: 1.0),  // Light red
+        CGColor(red: 0.8, green: 0.15, blue: 0.15, alpha: 1.0)  // Darker red
     ] as CFArray
 
     if let gradient = CGGradient(
@@ -45,74 +45,66 @@ func generateAppIcon(size: Int) -> CGImage? {
         )
     }
 
-    // Draw minimalist clipboard with rowing machine icon
+    // Draw white hardhat icon
     context.setFillColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
     context.setStrokeColor(red: 1.0, green: 1.0, blue: 1.0, alpha: 1.0)
 
     let scale = dimension / 1024.0
-    let lineWidth = 40.0 * scale
-    context.setLineWidth(lineWidth)
+    context.setLineWidth(30 * scale)
     context.setLineCap(.round)
     context.setLineJoin(.round)
 
-    // Clipboard outline (simplified)
-    let clipboardRect = CGRect(
-        x: dimension * 0.25,
-        y: dimension * 0.15,
-        width: dimension * 0.5,
-        height: dimension * 0.7
-    )
+    // Hardhat shape
+    let centerX = dimension * 0.5
+    let centerY = dimension * 0.5
 
-    // Rounded rectangle for clipboard
-    let clipPath = CGPath(
-        roundedRect: clipboardRect,
-        cornerWidth: 40 * scale,
-        cornerHeight: 40 * scale,
-        transform: nil
-    )
-    context.addPath(clipPath)
-    context.setLineWidth(30 * scale)
-    context.strokePath()
-
-    // Clipboard clip at top (small rectangle)
-    let clipRect = CGRect(
-        x: dimension * 0.42,
-        y: dimension * 0.10,
-        width: dimension * 0.16,
+    // Brim of hardhat (bottom rectangle/ellipse)
+    let brimRect = CGRect(
+        x: dimension * 0.2,
+        y: dimension * 0.62,
+        width: dimension * 0.6,
         height: dimension * 0.08
     )
-    let clipClipPath = CGPath(
-        roundedRect: clipRect,
-        cornerWidth: 15 * scale,
-        cornerHeight: 15 * scale,
-        transform: nil
-    )
-    context.addPath(clipClipPath)
+    context.addEllipse(in: brimRect)
     context.fillPath()
 
-    // Rowing machine silhouette (simplified geometric version)
-    // Draw three horizontal lines representing workout data rows
-    context.setLineWidth(25 * scale)
+    // Main dome of hardhat (top semi-circle/rounded rectangle)
+    let domeRect = CGRect(
+        x: dimension * 0.25,
+        y: dimension * 0.28,
+        width: dimension * 0.5,
+        height: dimension * 0.36
+    )
 
-    let lineY1 = dimension * 0.35
-    let lineY2 = dimension * 0.50
-    let lineY3 = dimension * 0.65
-    let lineStartX = dimension * 0.33
-    let lineEndX = dimension * 0.67
+    // Create rounded top for dome
+    let domePath = CGMutablePath()
+    domePath.move(to: CGPoint(x: domeRect.minX, y: domeRect.maxY))
+    domePath.addLine(to: CGPoint(x: domeRect.minX, y: domeRect.midY))
+    domePath.addQuadCurve(
+        to: CGPoint(x: domeRect.maxX, y: domeRect.midY),
+        control: CGPoint(x: centerX, y: domeRect.minY - dimension * 0.05)
+    )
+    domePath.addLine(to: CGPoint(x: domeRect.maxX, y: domeRect.maxY))
+    domePath.closeSubpath()
 
-    // Line 1
-    context.move(to: CGPoint(x: lineStartX, y: lineY1))
-    context.addLine(to: CGPoint(x: lineEndX, y: lineY1))
+    context.addPath(domePath)
+    context.fillPath()
 
-    // Line 2
-    context.move(to: CGPoint(x: lineStartX, y: lineY2))
-    context.addLine(to: CGPoint(x: lineEndX, y: lineY2))
-
-    // Line 3
-    context.move(to: CGPoint(x: lineStartX, y: lineY3))
-    context.addLine(to: CGPoint(x: lineEndX, y: lineY3))
-
-    context.strokePath()
+    // Ridge/vent on top of hardhat
+    let ridgeRect = CGRect(
+        x: dimension * 0.45,
+        y: dimension * 0.26,
+        width: dimension * 0.1,
+        height: dimension * 0.06
+    )
+    let ridgePath = CGPath(
+        roundedRect: ridgeRect,
+        cornerWidth: 10 * scale,
+        cornerHeight: 10 * scale,
+        transform: nil
+    )
+    context.addPath(ridgePath)
+    context.fillPath()
 
     return context.makeImage()
 }
