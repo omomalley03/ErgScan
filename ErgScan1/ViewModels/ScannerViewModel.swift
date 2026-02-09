@@ -45,7 +45,7 @@ class ScannerViewModel: ObservableObject {
     let cameraService = CameraService()
     private let visionService = VisionService()
     private let tableParser = TableParserService()
-    private let hapticService = HapticService()
+    private let hapticService = HapticService.shared
     private var cancellables = Set<AnyCancellable>()
 
     // MARK: - Scanning State
@@ -241,11 +241,72 @@ class ScannerViewModel: ObservableObject {
     func saveWorkout(context: ModelContext) async {
         guard case .locked(let table) = state else { return }
 
-        // 1. Save production workout
-        // TODO: Implement production workout saving logic (Workout + Intervals)
+        print("💾 Saving workout to user log")
 
-        // 2. Save benchmark dataset
-        saveBenchmarkDataset(table: table, context: context)
+        // Get last captured image
+        let lastImage = capturedImagesForBenchmark.last
+        let imageData = lastImage?.jpegData(compressionQuality: 0.8)
+
+        // Create Workout
+        let workout = Workout(
+            date: table.date ?? Date(),
+            workoutType: table.workoutType ?? "Unknown",
+            category: table.category ?? .single,
+            totalTime: table.totalTime ?? "",
+            totalDistance: table.totalDistance,
+            ocrConfidence: table.averageConfidence,
+            imageData: imageData
+        )
+        context.insert(workout)
+
+        // Save averages/summary row as interval with orderIndex = 0
+        if let averages = table.averages {
+            let averagesInterval = Interval(
+                orderIndex: 0,
+                time: averages.time?.text ?? "",
+                meters: averages.meters?.text ?? "",
+                splitPer500m: averages.splitPer500m?.text ?? "",
+                strokeRate: averages.strokeRate?.text ?? "",
+                heartRate: averages.heartRate?.text,
+                timeConfidence: Double(averages.time?.confidence ?? 0),
+                metersConfidence: Double(averages.meters?.confidence ?? 0),
+                splitConfidence: Double(averages.splitPer500m?.confidence ?? 0),
+                rateConfidence: Double(averages.strokeRate?.confidence ?? 0),
+                heartRateConfidence: Double(averages.heartRate?.confidence ?? 0)
+            )
+            averagesInterval.workout = workout
+            context.insert(averagesInterval)
+        }
+
+        // Create Intervals from data rows (starting at orderIndex = 1)
+        for (index, row) in table.rows.enumerated() {
+            let interval = Interval(
+                orderIndex: index + 1,
+                time: row.time?.text ?? "",
+                meters: row.meters?.text ?? "",
+                splitPer500m: row.splitPer500m?.text ?? "",
+                strokeRate: row.strokeRate?.text ?? "",
+                heartRate: row.heartRate?.text,
+                timeConfidence: Double(row.time?.confidence ?? 0),
+                metersConfidence: Double(row.meters?.confidence ?? 0),
+                splitConfidence: Double(row.splitPer500m?.confidence ?? 0),
+                rateConfidence: Double(row.strokeRate?.confidence ?? 0),
+                heartRateConfidence: Double(row.heartRate?.confidence ?? 0)
+            )
+            interval.workout = workout
+            context.insert(interval)
+        }
+
+        // Save context
+        do {
+            try context.save()
+            print("✅ Workout saved successfully")
+        } catch {
+            print("❌ Error saving workout: \(error)")
+        }
+
+        // Clear captured images
+        capturedImagesForBenchmark = []
 
         state = .saved
     }

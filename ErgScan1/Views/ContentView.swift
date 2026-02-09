@@ -15,13 +15,7 @@ struct ContentView: View {
             // Workouts tab
             WorkoutListView()
                 .tabItem {
-                    Label("Workouts", systemImage: "list.bullet")
-                }
-
-            // Benchmarks tab
-            BenchmarkListView()
-                .tabItem {
-                    Label("Benchmarks", systemImage: "chart.bar.doc.horizontal")
+                    Label("Workouts", systemImage: "clipboard.fill")
                 }
         }
     }

@@ -14,7 +14,7 @@ struct WorkoutListView: View {
             } else {
                 List {
                     ForEach(workouts) { workout in
-                        NavigationLink(destination: WorkoutDetailView(workout: workout)) {
+                        NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
                             WorkoutRow(workout: workout)
                         }
                     }
@@ -32,7 +32,7 @@ struct WorkoutListView: View {
 
     private var emptyState: some View {
         VStack(spacing: 20) {
-            Image(systemName: "figure.rowing")
+            Image(systemName: "clipboard")
                 .font(.system(size: 60))
                 .foregroundColor(.gray)
 
@@ -111,15 +111,6 @@ struct WorkoutRow: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
 
-                // Confidence indicator
-                HStack(spacing: 4) {
-                    Image(systemName: confidenceIcon)
-                        .foregroundColor(confidenceColor)
-                    Text(String(format: "%.0f%%", workout.ocrConfidence * 100))
-                }
-                .font(.caption)
-                .foregroundColor(.secondary)
-
                 // Edited badge
                 if workout.wasManuallyEdited {
                     Label("Edited", systemImage: "pencil")
@@ -131,27 +122,6 @@ struct WorkoutRow: View {
         .padding(.vertical, 4)
     }
 
-    // MARK: - Computed Properties
-
-    private var confidenceIcon: String {
-        if workout.ocrConfidence > 0.8 {
-            return "checkmark.circle.fill"
-        } else if workout.ocrConfidence > 0.5 {
-            return "exclamationmark.circle.fill"
-        } else {
-            return "xmark.circle.fill"
-        }
-    }
-
-    private var confidenceColor: Color {
-        if workout.ocrConfidence > 0.8 {
-            return .green
-        } else if workout.ocrConfidence > 0.5 {
-            return .yellow
-        } else {
-            return .red
-        }
-    }
 }
 
 #Preview {

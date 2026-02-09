@@ -24,11 +24,11 @@ struct TextPatternMatcher {
     /// Split pace format: "1:41.2" or "1:41.29"
     static let splitPattern = #"^\d:\d{2}\.\d{1,2}$"#
 
-    /// Meters format: "1179" or "5120" (3-5 digits)
-    static let metersPattern = #"^\d{3,5}$"#
+    /// Meters format: "1179" or "5120" (1-5 digits)
+    static let metersPattern = #"^\d{1,5}$"#
 
-    /// Stroke rate format: "29" or "32" (2 digits, validated 10-60)
-    static let ratePattern = #"^\d{2}$"#
+    /// Stroke rate format: "29" or "32" (1-2 digits, validated 10-60)
+    static let ratePattern = #"^\d{1,2}$"#
 
     /// Date format: "Dec 20 2025" — relaxed to handle OCR artifacts
     static let datePattern = #"^[A-Za-z]{3}:?\s*\d{1,2}[\s.]+\d{4}$"#

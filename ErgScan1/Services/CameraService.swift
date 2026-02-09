@@ -62,6 +62,12 @@ final class CameraService: NSObject, ObservableObject {
         }
 
         captureSession.beginConfiguration()
+
+        // Remove existing inputs to avoid duplicate input error
+        for input in captureSession.inputs {
+            captureSession.removeInput(input)
+        }
+
         captureSession.sessionPreset = .photo  // Full-resolution photo preset
 
         // Get back camera
@@ -92,6 +98,13 @@ final class CameraService: NSObject, ObservableObject {
             camera.exposureMode = .continuousAutoExposure
         }
         camera.unlockForConfiguration()
+
+        // Remove existing outputs (except video output which is managed separately)
+        for output in captureSession.outputs {
+            if !(output is AVCaptureVideoDataOutput) {
+                captureSession.removeOutput(output)
+            }
+        }
 
         // Create photo output
         let output = AVCapturePhotoOutput()
