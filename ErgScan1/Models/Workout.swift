@@ -13,8 +13,12 @@ final class Workout {
     var workoutType: String             // e.g., "3x4:00/3:00r" or "2000m"
     var category: WorkoutCategory       // single or interval
     var totalTime: String               // e.g., "21:00.3"
+    var totalDistance: Int?             // Total meters (e.g., 2000, 3845)
     var createdAt: Date
     var lastModifiedAt: Date
+
+    @Attribute(.externalStorage)
+    var imageData: Data?                // Last captured image (JPEG compressed)
 
     @Relationship(deleteRule: .cascade)
     var intervals: [Interval] = []      // For interval: actual intervals
@@ -28,15 +32,19 @@ final class Workout {
         workoutType: String,
         category: WorkoutCategory,
         totalTime: String,
-        ocrConfidence: Double = 0.0
+        totalDistance: Int? = nil,
+        ocrConfidence: Double = 0.0,
+        imageData: Data? = nil
     ) {
         self.id = UUID()
         self.date = date
         self.workoutType = workoutType
         self.category = category
         self.totalTime = totalTime
+        self.totalDistance = totalDistance
         self.createdAt = Date()
         self.lastModifiedAt = Date()
+        self.imageData = imageData
         self.ocrConfidence = ocrConfidence
         self.wasManuallyEdited = false
     }

@@ -18,11 +18,19 @@ struct ErgScan1App: App {
             BenchmarkInterval.self,
             BenchmarkImage.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        // Enable automatic lightweight migration for schema changes
+        let modelConfiguration = ModelConfiguration(
+            schema: schema,
+            isStoredInMemoryOnly: false,
+            allowsSave: true
+        )
 
         do {
             return try ModelContainer(for: schema, configurations: [modelConfiguration])
         } catch {
+            print("❌ ModelContainer creation failed: \(error)")
+            print("💡 Tip: Delete the app from simulator to clear old data")
             fatalError("Could not create ModelContainer: \(error)")
         }
     }()
