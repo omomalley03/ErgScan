@@ -225,6 +225,12 @@ struct TextPatternMatcher {
         return true
     }
 
+    /// Heart rate format: integer 40-220 (BPM)
+    func matchHeartRate(_ text: String) -> Bool {
+        guard let val = Int(text), val >= 40, val <= 220 else { return false }
+        return true
+    }
+
     func matchDate(_ text: String) -> Date? {
         // Pre-process date string to handle OCR artifacts
         var cleaned = text.trimmingCharacters(in: .whitespaces)
@@ -416,7 +422,7 @@ struct TextPatternMatcher {
     /// Check if text matches any recognized pattern
     func matchesAnyPattern(_ text: String) -> Bool {
         matchTime(text) || matchSplit(text) || matchMeters(text) ||
-        matchRate(text) || matchDate(text) != nil || matchWorkoutType(text)
+        matchRate(text) || matchHeartRate(text) || matchDate(text) != nil || matchWorkoutType(text)
     }
 
     /// Check if text is a recognized landmark

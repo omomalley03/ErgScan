@@ -169,9 +169,73 @@ class TableParserService {
             log("Using default column order: time | meters | split | rate")
         }
 
+        // Compute indices for HR detection and subsequent phases
+        let summaryIndex = anchorIndex + 4
+        let dataStartIndex = anchorIndex + 5
+
+        // HR Column Detection: PM5 shows HR as a 5th column when monitor connected
+        // There is no header for HR — detect by peeking at data row values
+        log("\n=== HR COLUMN DETECTION ===")
+        if !columnOrder.contains(.heartRate) {
+            // Peek at summary row + first 2 data rows
+            let peekIndices = [summaryIndex, dataStartIndex, dataStartIndex + 1]
+                .filter { $0 < rows.count }
+
+            var rowsWithExtraHR = 0
+            var sampleHRValues: [String] = []
+
+            for peekIdx in peekIndices {
+                let row = rows[peekIdx]
+
+                // Extract values using same logic as parseDataRow
+                var values: [String] = []
+                for fragment in row.fragments {
+                    let normalized = matcher.normalize(fragment.text)
+
+                    // Skip junk labels
+                    if matcher.isJunk(fragment.text) || matcher.isJunk(normalized) { continue }
+
+                    // Handle combined split+rate
+                    if let combined = matcher.parseCombinedSplitRate(normalized) {
+                        values.append(combined.split)
+                        values.append(combined.rate)
+                        continue
+                    }
+
+                    // Split smooshed text
+                    let split = matcher.splitSmooshedText(normalized)
+                    values.append(contentsOf: split)
+                }
+
+                log("  Peek row \(peekIdx): \(values.count) values, columnOrder has \(columnOrder.count) columns")
+
+                // Check if there are extra values beyond columnOrder
+                if values.count > columnOrder.count {
+                    // Check if trailing value(s) look like HR (integer 40-220)
+                    let extraValues = Array(values[columnOrder.count...])
+                    for val in extraValues {
+                        if let intVal = Int(val), intVal >= 40, intVal <= 220 {
+                            rowsWithExtraHR += 1
+                            sampleHRValues.append(val)
+                            break  // Only count first valid HR per row
+                        }
+                    }
+                }
+            }
+
+            // Require at least 2 rows with HR to avoid false positives
+            if rowsWithExtraHR >= 2 {
+                columnOrder.append(.heartRate)
+                log("  ✓ Detected heart rate column (samples: \(sampleHRValues.joined(separator: ", ")))")
+            } else {
+                log("  No heart rate column detected (\(rowsWithExtraHR)/\(peekIndices.count) rows had extra HR-range values)")
+            }
+        } else {
+            log("Heart rate column already in columnOrder")
+        }
+
         // Phase 6: Parse summary/averages row (first data row)
         log("\n=== PHASE 6: PARSE SUMMARY ROW ===")
-        let summaryIndex = anchorIndex + 4
         if summaryIndex < rows.count {
             log("Parsing summary row \(summaryIndex)...")
             if let avg = parseDataRow(rows[summaryIndex], columnOrder: columnOrder) {
@@ -181,6 +245,7 @@ class TableParserService {
                 log("  Meters: \(avg.meters?.text ?? "-")")
                 log("  Split: \(avg.splitPer500m?.text ?? "-")")
                 log("  Rate:  \(avg.strokeRate?.text ?? "-")")
+                log("  HR:    \(avg.heartRate?.text ?? "-")")
             } else {
                 log("❌ Failed to parse summary row (insufficient fields)")
             }
@@ -190,13 +255,12 @@ class TableParserService {
 
         // Phase 7: Parse data rows (intervals or splits)
         log("\n=== PHASE 7: PARSE DATA ROWS ===")
-        let dataStartIndex = anchorIndex + 5
         var dataRows: [TableRow] = []
         log("Parsing data rows starting from row \(dataStartIndex)...")
         for i in dataStartIndex..<rows.count {
             if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
                 dataRows.append(row)
-                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
+                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-"), hr=\(row.heartRate?.text ?? "-")")
             } else {
                 log("  Row \(i): skipped (insufficient fields)")
             }
@@ -230,6 +294,7 @@ class TableParserService {
         log("\n=== PARSING COMPLETE ===")
         log("Data rows: \(dataRows.count)")
         log("Category: \(table.category?.rawValue ?? "unknown")")
+        log("Columns detected: \(columnOrder.map { "\($0)" }.joined(separator: ", "))")
         log("Overall confidence: \(String(format: "%.0f%%", table.averageConfidence * 100))")
 
         return (table, debugLog.joined(separator: "\n"))
