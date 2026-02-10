@@ -36,6 +36,9 @@ class ScannerViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var captureCount: Int = 0
 
+    // User for linking workouts to accounts
+    @Published var currentUser: User?
+
     // Debug properties (only computed when showDebugTabs is true)
     @Published var debugResults: [GuideRelativeOCRResult] = []
     @Published var parserDebugLog: String = ""
@@ -241,7 +244,14 @@ class ScannerViewModel: ObservableObject {
     func saveWorkout(context: ModelContext) async {
         guard case .locked(let table) = state else { return }
 
-        print("💾 Saving workout to user log")
+        // Require authenticated user
+        guard let currentUser = self.currentUser else {
+            print("❌ Cannot save workout: No authenticated user")
+            errorMessage = "Must be signed in to save workouts"
+            return
+        }
+
+        print("💾 Saving workout to user log for user: \(currentUser.appleUserID)")
 
         // Get last captured image
         let lastImage = capturedImagesForBenchmark.last
@@ -257,6 +267,12 @@ class ScannerViewModel: ObservableObject {
             ocrConfidence: table.averageConfidence,
             imageData: imageData
         )
+
+        // Link to user
+        workout.user = currentUser
+        workout.userID = currentUser.appleUserID
+        workout.syncedToCloud = true
+
         context.insert(workout)
 
         // Save averages/summary row as interval with orderIndex = 0

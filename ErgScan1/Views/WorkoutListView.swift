@@ -5,7 +5,14 @@ import SwiftData
 struct WorkoutListView: View {
 
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Workout.date, order: .reverse) private var workouts: [Workout]
+    @Environment(\.currentUser) private var currentUser
+    @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
+
+    // Filter workouts by current user
+    private var workouts: [Workout] {
+        guard let currentUser = currentUser else { return [] }
+        return allWorkouts.filter { $0.userID == currentUser.appleUserID }
+    }
 
     var body: some View {
         NavigationStack {

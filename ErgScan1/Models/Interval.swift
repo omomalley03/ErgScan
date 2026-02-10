@@ -19,6 +19,9 @@ final class Interval {
     var rateConfidence: Double
     var heartRateConfidence: Double
 
+    // CloudKit sync metadata (syncs via Workout relationship)
+    var syncedToCloud: Bool = false
+
     // Note: For interval workouts, each row is a separate interval
     //       For single pieces, each row is a split of the continuous piece
 
@@ -47,5 +50,6 @@ final class Interval {
         self.splitConfidence = splitConfidence
         self.rateConfidence = rateConfidence
         self.heartRateConfidence = heartRateConfidence
+        self.syncedToCloud = false
     }
 }

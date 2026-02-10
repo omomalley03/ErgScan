@@ -27,6 +27,15 @@ final class Workout {
     var ocrConfidence: Double           // Average confidence across all fields
     var wasManuallyEdited: Bool         // Track if user corrected data
 
+    // User relationship for CloudKit sync
+    var user: User?
+    var userID: String?                 // Denormalized for query performance
+
+    // CloudKit sync metadata
+    var syncedToCloud: Bool = false
+    var cloudKitRecordID: String?
+    var lastSyncedAt: Date?
+
     init(
         date: Date,
         workoutType: String,
@@ -47,5 +56,6 @@ final class Workout {
         self.imageData = imageData
         self.ocrConfidence = ocrConfidence
         self.wasManuallyEdited = false
+        self.syncedToCloud = false
     }
 }

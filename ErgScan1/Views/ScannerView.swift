@@ -5,6 +5,7 @@ import SwiftData
 struct ScannerView: View {
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.currentUser) private var currentUser
     @StateObject private var viewModel = ScannerViewModel()
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
@@ -67,6 +68,9 @@ struct ScannerView: View {
         }
         .task {
             await viewModel.setupCamera()
+        }
+        .onAppear {
+            viewModel.currentUser = currentUser
         }
         .onDisappear {
             viewModel.stopCamera()
