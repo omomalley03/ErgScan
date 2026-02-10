@@ -21,6 +21,7 @@ struct ErgScan1App: App {
             BenchmarkWorkout.self,
             BenchmarkInterval.self,
             BenchmarkImage.self,
+            Goal.self,
         ])
 
         // Try CloudKit first

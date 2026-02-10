@@ -79,52 +79,39 @@ struct WorkoutRow: View {
                 Text(workout.workoutType)
                     .font(.headline)
 
-                Spacer()
+                // Zone badge
+                if let zone = workout.zone {
+                    Text(zone.displayName)
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(Capsule().fill(zone.color))
+                }
 
-                // Category badge
-                Text(workout.category == .interval ? "INTERVAL" : "SINGLE")
-                    .font(.caption2)
-                    .fontWeight(.bold)
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule().fill(
-                            workout.category == .interval ? Color.blue : Color.green
-                        )
-                    )
-            }
-
-            HStack {
-                // Date
-                Text(workout.date, style: .date)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                // Erg test flag
+                if workout.isErgTest {
+                    Image(systemName: "flag.checkered")
+                        .font(.subheadline)
+                        .foregroundColor(.primary)
+                }
 
                 Spacer()
 
-                // Total time
-                Text(workout.totalTime)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-            }
-
-            HStack(spacing: 12) {
-                // Number of intervals/splits
-                Label(
-                    "\(workout.intervals.count) \(workout.category == .interval ? "intervals" : "splits")",
-                    systemImage: "list.number"
-                )
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-                // Edited badge
-                if workout.wasManuallyEdited {
-                    Label("Edited", systemImage: "pencil")
-                        .font(.caption)
-                        .foregroundColor(.orange)
+                // Average split (right side)
+                if let split = workout.averageSplit, !split.isEmpty {
+                    Text(split)
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .monospacedDigit()
                 }
             }
+
+            // Date only
+            Text(workout.date, style: .date)
+                .font(.subheadline)
+                .foregroundColor(.secondary)
         }
         .padding(.vertical, 4)
     }

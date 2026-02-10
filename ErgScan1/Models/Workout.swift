@@ -26,6 +26,26 @@ final class Workout {
 
     var ocrConfidence: Double           // Average confidence across all fields
     var wasManuallyEdited: Bool         // Track if user corrected data
+    var isErgTest: Bool = false          // Whether this is an erg test piece
+
+    // Training intensity zone
+    var intensityZone: String?          // Raw string for SwiftData/CloudKit compatibility
+
+    // Convenience computed property (not persisted)
+    var zone: IntensityZone? {
+        get {
+            guard let raw = intensityZone else { return nil }
+            return IntensityZone(rawValue: raw)
+        }
+        set {
+            intensityZone = newValue?.rawValue
+        }
+    }
+
+    // Average split from the averages interval (orderIndex == 0)
+    var averageSplit: String? {
+        intervals.first(where: { $0.orderIndex == 0 })?.splitPer500m
+    }
 
     // User relationship for CloudKit sync
     var user: User?
@@ -43,7 +63,9 @@ final class Workout {
         totalTime: String,
         totalDistance: Int? = nil,
         ocrConfidence: Double = 0.0,
-        imageData: Data? = nil
+        imageData: Data? = nil,
+        intensityZone: String? = nil,
+        isErgTest: Bool = false
     ) {
         self.id = UUID()
         self.date = date
@@ -56,6 +78,8 @@ final class Workout {
         self.imageData = imageData
         self.ocrConfidence = ocrConfidence
         self.wasManuallyEdited = false
+        self.isErgTest = isErgTest
+        self.intensityZone = intensityZone
         self.syncedToCloud = false
     }
 }

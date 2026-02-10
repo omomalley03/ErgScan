@@ -50,9 +50,9 @@ struct ScannerView: View {
                 case .locked(let table):
                     EditableWorkoutForm(
                         table: table,
-                        onSave: { editedDate in
+                        onSave: { editedDate, selectedZone, isErgTest in
                             Task {
-                                await viewModel.saveWorkout(context: modelContext, customDate: editedDate)
+                                await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest)
                             }
                         },
                         onRetake: {

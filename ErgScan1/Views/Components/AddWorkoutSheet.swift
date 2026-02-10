@@ -11,6 +11,7 @@ struct AddWorkoutSheet: View {
     @Binding var isPresented: Bool
     let onScan: () -> Void
     let onUpload: () -> Void
+    let onGoals: () -> Void
     @State private var offset: CGFloat = 300
 
     var body: some View {
@@ -42,7 +43,7 @@ struct AddWorkoutSheet: View {
                         .fontWeight(.bold)
 
                     // Action buttons
-                    HStack(spacing: 40) {
+                    HStack(spacing: 28) {
                         // Scan button
                         VStack(spacing: 12) {
                             Button {
@@ -87,6 +88,30 @@ struct AddWorkoutSheet: View {
                             }
 
                             Text("Upload")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+
+                        // Goals button
+                        VStack(spacing: 12) {
+                            Button {
+                                HapticService.shared.lightImpact()
+                                dismissSheet()
+                                onGoals()
+                            } label: {
+                                ZStack {
+                                    Circle()
+                                        .fill(Color.orange)
+                                        .frame(width: 80, height: 80)
+                                        .shadow(color: .orange.opacity(0.3), radius: 8, y: 4)
+
+                                    Image(systemName: "target")
+                                        .font(.system(size: 32))
+                                        .foregroundColor(.white)
+                                }
+                            }
+
+                            Text("Goals")
                                 .font(.subheadline)
                                 .fontWeight(.medium)
                         }

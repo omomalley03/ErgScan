@@ -241,7 +241,7 @@ class ScannerViewModel: ObservableObject {
 
     // MARK: - Save Workout
 
-    func saveWorkout(context: ModelContext, customDate: Date? = nil) async {
+    func saveWorkout(context: ModelContext, customDate: Date? = nil, intensityZone: IntensityZone? = nil, isErgTest: Bool = false) async {
         guard case .locked(let table) = state else { return }
 
         // Require authenticated user
@@ -268,7 +268,9 @@ class ScannerViewModel: ObservableObject {
             totalTime: table.totalTime ?? "",
             totalDistance: table.totalDistance,
             ocrConfidence: table.averageConfidence,
-            imageData: imageData
+            imageData: imageData,
+            intensityZone: intensityZone?.rawValue,
+            isErgTest: isErgTest
         )
 
         // Link to user

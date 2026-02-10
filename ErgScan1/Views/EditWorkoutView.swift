@@ -22,7 +22,46 @@ struct EditWorkoutView: View {
 
                 DatePicker("Date", selection: $workout.date, displayedComponents: .date)
 
+                HStack {
+                    Text("Zone")
+                    Spacer()
+                    HStack(spacing: 6) {
+                        ForEach(IntensityZone.allCases, id: \.self) { zone in
+                            Button {
+                                if workout.zone == zone {
+                                    workout.zone = nil
+                                } else {
+                                    workout.zone = zone
+                                }
+                            } label: {
+                                Text(zone.displayName)
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        Capsule().fill(
+                                            workout.zone == zone
+                                                ? zone.color.opacity(0.8)
+                                                : zone.color.opacity(0.15)
+                                        )
+                                    )
+                                    .foregroundColor(workout.zone == zone ? .white : zone.color)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
                 TextField("Total Time", text: $workout.totalTime)
+
+                // Erg Test toggle
+                HStack {
+                    Image(systemName: "flag.checkered")
+                        .font(.title3)
+                        .foregroundColor(workout.isErgTest ? .primary : .secondary.opacity(0.4))
+                    Toggle("Erg Test", isOn: $workout.isErgTest)
+                }
             }
 
             // Intervals/Splits section

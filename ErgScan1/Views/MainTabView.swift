@@ -13,6 +13,8 @@ struct MainTabView: View {
     @State private var showScanner = false
     @State private var showImagePicker = false
     @State private var showSearch = false
+    @State private var showGoals = false
+    @State private var logHighlightDate: Date?
     @EnvironmentObject var themeViewModel: ThemeViewModel
 
     var body: some View {
@@ -21,9 +23,15 @@ struct MainTabView: View {
             Group {
                 switch selectedTab {
                 case .dashboard:
-                    DashboardView(showSearch: $showSearch)
+                    DashboardView(showSearch: $showSearch, onViewDay: { date in
+                        selectedTab = .log
+                        // Delay so LogView mounts before the highlight fires
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                            logHighlightDate = date
+                        }
+                    })
                 case .log:
-                    LogView(showSearch: $showSearch)
+                    LogView(showSearch: $showSearch, highlightDate: $logHighlightDate)
                 case .add:
                     EmptyView()  // Never shown (center button doesn't navigate)
                 case .teams:
@@ -57,6 +65,11 @@ struct MainTabView: View {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                         showImagePicker = true
                     }
+                },
+                onGoals: {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                        showGoals = true
+                    }
                 }
             )
         }
@@ -75,6 +88,9 @@ struct MainTabView: View {
         }
         .sheet(isPresented: $showSearch) {
             SearchView()
+        }
+        .sheet(isPresented: $showGoals) {
+            GoalsView()
         }
         .preferredColorScheme(themeViewModel.colorScheme)
     }

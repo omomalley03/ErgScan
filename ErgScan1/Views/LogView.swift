@@ -13,6 +13,8 @@ struct LogView: View {
     @Environment(\.currentUser) private var currentUser
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
+    @Binding var highlightDate: Date?
+    @State private var highlightedIDs: Set<UUID> = []
 
     // Filter workouts by current user
     private var workouts: [Workout] {
@@ -25,25 +27,39 @@ struct LogView: View {
             if workouts.isEmpty {
                 emptyState
             } else {
-                List {
-                    ForEach(workouts) { workout in
-                        NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
-                            WorkoutRow(workout: workout)
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(workouts) { workout in
+                            NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
+                                WorkoutRow(workout: workout)
+                            }
+                            .id(workout.id)
+                            .listRowBackground(
+                                highlightedIDs.contains(workout.id)
+                                    ? Color.blue.opacity(0.15)
+                                    : nil
+                            )
+                        }
+                        .onDelete(perform: deleteWorkouts)
+                    }
+                    .navigationTitle("Log")
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button {
+                                showSearch = true
+                            } label: {
+                                Image(systemName: "magnifyingglass")
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            EditButton()
                         }
                     }
-                    .onDelete(perform: deleteWorkouts)
-                }
-                .navigationTitle("Log")
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            showSearch = true
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
+                    .onAppear {
+                        processHighlight(proxy: proxy)
                     }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        EditButton()
+                    .onChange(of: highlightDate) { _, _ in
+                        processHighlight(proxy: proxy)
                     }
                 }
             }
@@ -78,6 +94,28 @@ struct LogView: View {
                     Image(systemName: "magnifyingglass")
                 }
             }
+        }
+    }
+
+    // MARK: - Highlight
+
+    private func processHighlight(proxy: ScrollViewProxy) {
+        guard let date = highlightDate else { return }
+        let calendar = Calendar.current
+        let matching = workouts.filter { calendar.isDate($0.date, inSameDayAs: date) }
+        guard let first = matching.first else {
+            highlightDate = nil
+            return
+        }
+        highlightedIDs = Set(matching.map(\.id))
+        withAnimation {
+            proxy.scrollTo(first.id, anchor: .center)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation(.easeOut(duration: 0.5)) {
+                highlightedIDs.removeAll()
+            }
+            highlightDate = nil
         }
     }
 
