@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct ErgScan1App: App {
     @StateObject private var authService = AuthenticationService()
+    @StateObject private var themeViewModel = ThemeViewModel()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -59,6 +60,7 @@ struct ErgScan1App: App {
         }
         .modelContainer(sharedModelContainer)
         .environmentObject(authService)
+        .environmentObject(themeViewModel)
     }
 }
 
@@ -66,15 +68,18 @@ struct ErgScan1App: App {
 struct ContentViewWrapper: View {
     @ObservedObject var authService: AuthenticationService
     @Environment(\.modelContext) private var modelContext
+    @EnvironmentObject var themeViewModel: ThemeViewModel
 
     var body: some View {
         Group {
             // Authentication gate
             if case .authenticated(let user) = authService.authState {
-                ContentView()
+                MainTabView()
                     .environment(\.currentUser, user)
+                    .environmentObject(themeViewModel)
             } else {
                 AuthenticationView(authService: authService)
+                    .environmentObject(themeViewModel)
             }
         }
         .onAppear {

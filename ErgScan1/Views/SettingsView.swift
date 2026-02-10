@@ -4,6 +4,7 @@ import SwiftData
 struct SettingsView: View {
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var authService: AuthenticationService
+    @EnvironmentObject var themeViewModel: ThemeViewModel
     @State private var showingSignOutAlert = false
 
     var body: some View {
@@ -34,6 +35,20 @@ struct SettingsView: View {
                         }
                         .padding(.vertical, 8)
                     }
+                }
+
+                // Appearance Section
+                Section("Appearance") {
+                    Picker("Theme", selection: $themeViewModel.currentTheme) {
+                        ForEach(AppTheme.allCases, id: \.self) { theme in
+                            Text(theme.rawValue).tag(theme)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    Text("Choose your preferred theme or use system setting")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
                 }
 
                 // Sync Section

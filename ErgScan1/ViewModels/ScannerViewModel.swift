@@ -241,7 +241,7 @@ class ScannerViewModel: ObservableObject {
 
     // MARK: - Save Workout
 
-    func saveWorkout(context: ModelContext) async {
+    func saveWorkout(context: ModelContext, customDate: Date? = nil) async {
         guard case .locked(let table) = state else { return }
 
         // Require authenticated user
@@ -257,9 +257,12 @@ class ScannerViewModel: ObservableObject {
         let lastImage = capturedImagesForBenchmark.last
         let imageData = lastImage?.jpegData(compressionQuality: 0.8)
 
+        // Use custom date if provided, otherwise fall back to table.date or today
+        let workoutDate = customDate ?? table.date ?? Date()
+
         // Create Workout
         let workout = Workout(
-            date: table.date ?? Date(),
+            date: workoutDate,
             workoutType: table.workoutType ?? "Unknown",
             category: table.category ?? .single,
             totalTime: table.totalTime ?? "",

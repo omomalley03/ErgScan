@@ -52,7 +52,7 @@ struct EnhancedWorkoutDetailView: View {
                 savedImageView
 
                 if let averages = averagesInterval {
-                    AveragesSummaryCard(interval: averages, category: workout.category)
+                    AveragesSummaryCard(interval: averages, category: workout.category, date: workout.date)
                 }
 
                 intervalsContent
@@ -168,13 +168,26 @@ struct EnhancedWorkoutDetailView: View {
 struct AveragesSummaryCard: View {
     let interval: Interval
     let category: WorkoutCategory?
+    let date: Date
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("SUMMARY")
-                .font(.caption)
-                .fontWeight(.bold)
+            HStack {
+                Text("SUMMARY")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.secondary)
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                        .font(.caption)
+                    Text(date, style: .date)
+                        .font(.caption)
+                }
                 .foregroundColor(.secondary)
+            }
 
             HStack(spacing: 20) {
                 VStack(alignment: .leading, spacing: 8) {
