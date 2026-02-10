@@ -4,13 +4,15 @@ import SwiftUI
 struct EditableWorkoutForm: View {
 
     let table: RecognizedTable
-    let onSave: () -> Void
+    let onSave: (Date) -> Void
     let onRetake: () -> Void
 
     @State private var editedWorkoutType: String
     @State private var editedDescription: String
+    @State private var editedDate: Date
+    @State private var showDatePicker: Bool = false
 
-    init(table: RecognizedTable, onSave: @escaping () -> Void, onRetake: @escaping () -> Void) {
+    init(table: RecognizedTable, onSave: @escaping (Date) -> Void, onRetake: @escaping () -> Void) {
         self.table = table
         self.onSave = onSave
         self.onRetake = onRetake
@@ -18,6 +20,8 @@ struct EditableWorkoutForm: View {
         // Initialize editable fields with current values
         _editedWorkoutType = State(initialValue: table.workoutType ?? "")
         _editedDescription = State(initialValue: table.description ?? "")
+        // Default to today if OCR didn't capture the date
+        _editedDate = State(initialValue: table.date ?? Date())
     }
 
     // Helper computed property to determine if heart rate column should be shown
@@ -49,7 +53,57 @@ struct EditableWorkoutForm: View {
                 }
                 .padding(.bottom, 4)
 
-                // 2. Descriptor Row (editable)
+                // 2. Date Selector (always editable)
+                VStack(alignment: .leading, spacing: 8) {
+                    Button {
+                        showDatePicker.toggle()
+                    } label: {
+                        HStack {
+                            Image(systemName: "calendar")
+                                .foregroundColor(table.date == nil ? .orange : .secondary)
+                            Text(editedDate, style: .date)
+                                .font(.subheadline)
+                                .foregroundColor(.primary)
+                            Spacer()
+                            Image(systemName: "chevron.down")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                                .rotationEffect(.degrees(showDatePicker ? 180 : 0))
+                        }
+                        .padding(.vertical, 8)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color(.secondarySystemBackground))
+                        )
+                    }
+
+                    // Show warning if date wasn't detected by OCR
+                    if table.date == nil {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                            Text("Date not detected - defaulted to today. Tap to change.")
+                                .font(.caption2)
+                        }
+                        .foregroundColor(.orange)
+                    }
+
+                    // Date Picker (shown when tapped)
+                    if showDatePicker {
+                        DatePicker(
+                            "Select Date",
+                            selection: $editedDate,
+                            displayedComponents: .date
+                        )
+                        .datePickerStyle(.wheel)
+                        .labelsHidden()
+                        .padding(.vertical, 8)
+                    }
+                }
+                .padding(.bottom, 4)
+
+                // 3. Descriptor Row (editable)
                 TextField("Description", text: $editedDescription)
                     .font(.body)
                     .textFieldStyle(.roundedBorder)
@@ -57,7 +111,7 @@ struct EditableWorkoutForm: View {
 
                 Divider()
 
-                // 3. Column Headers
+                // 4. Column Headers
                 HStack(spacing: 0) {
                     Text("Time")
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -79,7 +133,7 @@ struct EditableWorkoutForm: View {
 
                 Divider()
 
-                // 4. Summary/Averages Row (bold to distinguish from data rows)
+                // 5. Summary/Averages Row (bold to distinguish from data rows)
                 if let averages = table.averages {
                     EditableTableRowView(row: averages, showHeartRate: showHeartRate)
                         .fontWeight(.semibold)
@@ -87,7 +141,7 @@ struct EditableWorkoutForm: View {
                     Divider()
                 }
 
-                // 5. Data Rows in tabular format
+                // 6. Data Rows in tabular format
                 if !table.rows.isEmpty {
                     ForEach(Array(table.rows.enumerated()), id: \.offset) { index, row in
                         EditableTableRowView(row: row, showHeartRate: showHeartRate)
@@ -120,7 +174,7 @@ struct EditableWorkoutForm: View {
             }
 
             Button {
-                onSave()
+                onSave(editedDate)
             } label: {
                 HStack {
                     Image(systemName: "checkmark")
@@ -197,7 +251,7 @@ struct EditableTableRowView: View {
 
     EditableWorkoutForm(
         table: sampleTable,
-        onSave: { print("Save") },
+        onSave: { date in print("Save with date: \(date)") },
         onRetake: { print("Retake") }
     )
 }

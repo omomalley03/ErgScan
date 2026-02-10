@@ -6,6 +6,7 @@ struct ScannerView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
+    @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel = ScannerViewModel()
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
@@ -49,9 +50,9 @@ struct ScannerView: View {
                 case .locked(let table):
                     EditableWorkoutForm(
                         table: table,
-                        onSave: {
+                        onSave: { editedDate in
                             Task {
-                                await viewModel.saveWorkout(context: modelContext)
+                                await viewModel.saveWorkout(context: modelContext, customDate: editedDate)
                             }
                         },
                         onRetake: {
@@ -74,6 +75,14 @@ struct ScannerView: View {
         }
         .onDisappear {
             viewModel.stopCamera()
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Cancel") {
+                    viewModel.stopCamera()
+                    dismiss()
+                }
+            }
         }
         .alert("Error", isPresented: .constant(viewModel.errorMessage != nil)) {
             Button("OK") {
