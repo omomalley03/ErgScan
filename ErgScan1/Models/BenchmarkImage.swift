@@ -5,13 +5,13 @@ import SwiftData
 /// Stores raw image data and OCR outputs for accuracy comparison
 @Model
 final class BenchmarkImage {
-    var id: UUID
+    var id: UUID = UUID()
     var workout: BenchmarkWorkout?
-    var capturedDate: Date
+    var capturedDate: Date = Date()
 
     // Image storage (compressed JPEG)
     @Attribute(.externalStorage)
-    var imageData: Data
+    var imageData: Data?
 
     // Image metadata
     var angleDescription: String?  // e.g., "straight on", "angled left", "zoomed out"

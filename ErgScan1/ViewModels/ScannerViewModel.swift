@@ -241,14 +241,14 @@ class ScannerViewModel: ObservableObject {
 
     // MARK: - Save Workout
 
-    func saveWorkout(context: ModelContext, customDate: Date? = nil, intensityZone: IntensityZone? = nil, isErgTest: Bool = false) async {
-        guard case .locked(let table) = state else { return }
+    func saveWorkout(context: ModelContext, customDate: Date? = nil, intensityZone: IntensityZone? = nil, isErgTest: Bool = false) async -> Workout? {
+        guard case .locked(let table) = state else { return nil }
 
         // Require authenticated user
         guard let currentUser = self.currentUser else {
             print("❌ Cannot save workout: No authenticated user")
             errorMessage = "Must be signed in to save workouts"
-            return
+            return nil
         }
 
         print("💾 Saving workout to user log for user: \(currentUser.appleUserID)")
@@ -330,6 +330,7 @@ class ScannerViewModel: ObservableObject {
         capturedImagesForBenchmark = []
 
         state = .saved
+        return workout
     }
 
     private func saveBenchmarkDataset(table: RecognizedTable, context: ModelContext) {

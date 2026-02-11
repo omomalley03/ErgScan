@@ -3,15 +3,16 @@ import SwiftData
 
 @Model
 final class User {
-    var id: UUID
-    var appleUserID: String        // Unique Apple ID identifier
+    var id: UUID = UUID()
+    var appleUserID: String = ""   // Unique Apple ID identifier
     var email: String?             // Optional (user may hide)
     var fullName: String?          // Optional (user may hide)
-    var createdAt: Date
-    var lastSignInAt: Date
+    var username: String?          // Unique handle for social features
+    var createdAt: Date = Date()
+    var lastSignInAt: Date = Date()
 
     @Relationship(deleteRule: .cascade)
-    var workouts: [Workout] = []
+    var workouts: [Workout]?
 
     init(appleUserID: String, email: String? = nil, fullName: String? = nil) {
         self.id = UUID()

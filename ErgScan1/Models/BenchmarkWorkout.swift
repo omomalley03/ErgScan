@@ -5,8 +5,8 @@ import SwiftData
 /// Stores the final locked data from a scanning session as the "correct" labels
 @Model
 final class BenchmarkWorkout {
-    var id: UUID
-    var createdDate: Date
+    var id: UUID = UUID()
+    var createdDate: Date = Date()
 
     // Workout metadata (ground truth from locked RecognizedTable)
     var workoutType: String?
@@ -23,10 +23,10 @@ final class BenchmarkWorkout {
 
     // Relationships
     @Relationship(deleteRule: .cascade, inverse: \BenchmarkImage.workout)
-    var images: [BenchmarkImage] = []
+    var images: [BenchmarkImage]?
 
     @Relationship(deleteRule: .cascade, inverse: \BenchmarkInterval.workout)
-    var intervals: [BenchmarkInterval] = []
+    var intervals: [BenchmarkInterval]?
 
     // Metadata
     var notes: String?  // User notes about this benchmark

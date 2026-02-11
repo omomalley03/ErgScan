@@ -34,7 +34,7 @@ class BenchmarkListViewModel: ObservableObject {
 
     /// Retest a single benchmark image
     func retestImage(_ image: BenchmarkImage, context: ModelContext) async {
-        guard let imageData = UIImage(data: image.imageData) else {
+        guard let rawData = image.imageData, let imageData = UIImage(data: rawData) else {
             print("⚠️ Failed to load image data")
             return
         }
@@ -184,7 +184,7 @@ class BenchmarkListViewModel: ObservableObject {
         }
 
         // Separate averages (orderIndex = 0) from data rows (orderIndex >= 1)
-        let sortedIntervals = groundTruth.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+        let sortedIntervals = (groundTruth.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
         let gtAverages = sortedIntervals.first(where: { $0.orderIndex == 0 })
         let gtDataRows = sortedIntervals.filter { $0.orderIndex >= 1 }
 
@@ -332,7 +332,7 @@ class BenchmarkListViewModel: ObservableObject {
                     report += "Reps: \(reps)\n"
                 }
                 report += "\nIntervals:\n"
-                let sortedIntervals = workout.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+                let sortedIntervals = (workout.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
                 for (i, interval) in sortedIntervals.enumerated() {
                     report += "  [\(i + 1)] Time: \(interval.time ?? "nil")"
                     if let m = interval.meters { report += ", Meters: \(m)" }
@@ -402,7 +402,7 @@ class BenchmarkListViewModel: ObservableObject {
                 report += "GT=\"\(workout.workoutDescription ?? "nil")\" Parsed=\"\(parsedTable.description ?? "nil")\"\n"
 
                 // Intervals
-                let gtIntervals = workout.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+                let gtIntervals = (workout.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
                 for (i, gtInterval) in gtIntervals.enumerated() {
                     if i < parsedTable.rows.count {
                         let parsedRow = parsedTable.rows[i]

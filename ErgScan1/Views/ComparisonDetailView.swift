@@ -131,7 +131,7 @@ struct ComparisonDetailView: View {
                 .foregroundColor(.primary)
 
             // Extract ground truth averages (orderIndex = 0)
-            let gtAverages = groundTruth.intervals.first(where: { $0.orderIndex == 0 })
+            let gtAverages = (groundTruth.intervals ?? []).first(where: { $0.orderIndex == 0 })
 
             if let parsedAvg = parsed.averages {
                 ComparisonRow(
@@ -182,7 +182,7 @@ struct ComparisonDetailView: View {
                 .foregroundColor(.primary)
 
             // Filter out averages row (orderIndex = 0), only show data rows
-            let gtIntervals = groundTruth.intervals
+            let gtIntervals = (groundTruth.intervals ?? [])
                 .filter { $0.orderIndex >= 1 }
                 .sorted(by: { $0.orderIndex < $1.orderIndex })
 

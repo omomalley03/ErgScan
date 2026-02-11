@@ -131,7 +131,7 @@ struct BenchmarkReportView: View {
         print("📝 Starting report generation...")
 
         // Capture data from SwiftData on main thread
-        let allImages = benchmarks.flatMap { $0.images }
+        let allImages = benchmarks.flatMap { ($0.images ?? []) }
         print("📝 Found \(allImages.count) images in \(benchmarks.count) benchmarks")
 
         guard !allImages.isEmpty else {
@@ -199,7 +199,7 @@ struct BenchmarkReportView: View {
                         reportText += "Reps: \(reps)\n"
                     }
                     reportText += "\nIntervals:\n"
-                    let sortedIntervals = workout.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+                    let sortedIntervals = (workout.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
                     for (i, interval) in sortedIntervals.enumerated() {
                         reportText += "  [\(i + 1)] Time: \(interval.time ?? "nil")"
                         if let m = interval.meters { reportText += ", Meters: \(m)" }
@@ -263,7 +263,7 @@ struct BenchmarkReportView: View {
                         reportText += "GT=\"\(workout.workoutDescription ?? "nil")\" Parsed=\"\(parsedTable.description ?? "nil")\"\n"
 
                         // Intervals
-                        let gtIntervals = workout.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+                        let gtIntervals = (workout.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
                         for (i, gtInterval) in gtIntervals.enumerated() {
                             if i < parsedTable.rows.count {
                                 let parsedRow = parsedTable.rows[i]

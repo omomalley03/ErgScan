@@ -34,9 +34,24 @@ struct ProfileView: View {
                                 .font(.title2)
                                 .fontWeight(.bold)
 
+                            // Username
+                            if let username = user.username, !username.isEmpty {
+                                Text("@\(username)")
+                                    .font(.subheadline)
+                                    .foregroundColor(.blue)
+                            } else {
+                                Button {
+                                    showSettings = true
+                                } label: {
+                                    Text("Set up your username")
+                                        .font(.subheadline)
+                                        .foregroundColor(.blue)
+                                }
+                            }
+
                             if let email = user.email {
                                 Text(email)
-                                    .font(.subheadline)
+                                    .font(.caption)
                                     .foregroundColor(.secondary)
                             }
                         }

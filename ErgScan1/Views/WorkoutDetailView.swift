@@ -80,7 +80,7 @@ struct WorkoutDetailView: View {
     // MARK: - Computed Properties
 
     private var sortedIntervals: [Interval] {
-        workout.intervals.sorted { $0.orderIndex < $1.orderIndex }
+        (workout.intervals ?? []).sorted { $0.orderIndex < $1.orderIndex }
     }
 
     private var confidenceIcon: String {
@@ -195,7 +195,8 @@ struct IntervalRow: View {
         rateConfidence: 0.92
     )
 
-    workout.intervals.append(interval1)
+    if workout.intervals == nil { workout.intervals = [] }
+    workout.intervals?.append(interval1)
     container.mainContext.insert(workout)
 
     return NavigationStack {

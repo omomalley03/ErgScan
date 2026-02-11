@@ -72,7 +72,7 @@ struct BenchmarkDetailView: View {
                 deleteBenchmark()
             }
         } message: {
-            Text("This will permanently delete this benchmark and all \(benchmark.images.count) associated images.")
+            Text("This will permanently delete this benchmark and all \((benchmark.images ?? []).count) associated images.")
         }
     }
 
@@ -106,14 +106,14 @@ struct BenchmarkDetailView: View {
             }
 
             // Interval data
-            if !benchmark.intervals.isEmpty {
-                Text("Intervals (\(benchmark.intervals.count))")
+            if !(benchmark.intervals ?? []).isEmpty {
+                Text("Intervals (\((benchmark.intervals ?? []).count))")
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
 
-                ForEach(benchmark.intervals.sorted(by: { $0.orderIndex < $1.orderIndex }), id: \.id) { interval in
+                ForEach((benchmark.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex }), id: \.id) { interval in
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Interval \(interval.orderIndex + 1)")
                             .font(.caption)
@@ -150,7 +150,7 @@ struct BenchmarkDetailView: View {
     private var imagesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("Captured Images (\(benchmark.images.count))")
+                Text("Captured Images (\((benchmark.images ?? []).count))")
                     .font(.headline)
                     .foregroundColor(.primary)
 
@@ -213,7 +213,7 @@ struct BenchmarkDetailView: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 12) {
-                ForEach(benchmark.images.sorted(by: { $0.capturedDate < $1.capturedDate }), id: \.id) { image in
+                ForEach((benchmark.images ?? []).sorted(by: { $0.capturedDate < $1.capturedDate }), id: \.id) { image in
                     ImageThumbnailView(image: image)
                         .onTapGesture {
                             selectedImage = image
@@ -272,7 +272,7 @@ struct ImageThumbnailView: View {
     var body: some View {
         VStack(spacing: 4) {
             // Thumbnail
-            if let uiImage = UIImage(data: image.imageData) {
+            if let data = image.imageData, let uiImage = UIImage(data: data) {
                 Image(uiImage: uiImage)
                     .resizable()
                     .aspectRatio(contentMode: .fill)
@@ -325,7 +325,7 @@ struct ImageDetailView: View {
     var body: some View {
         NavigationStack {
             VStack {
-                if let uiImage = UIImage(data: image.imageData) {
+                if let data = image.imageData, let uiImage = UIImage(data: data) {
                     Image(uiImage: uiImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)

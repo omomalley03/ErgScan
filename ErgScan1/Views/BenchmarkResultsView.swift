@@ -48,7 +48,7 @@ struct BenchmarkResultsView: View {
     // MARK: - Computed Properties
 
     private var allImages: [BenchmarkImage] {
-        benchmarks.flatMap { $0.images }
+        benchmarks.flatMap { ($0.images ?? []) }
     }
 
     private var testedImages: [BenchmarkImage] {
@@ -335,7 +335,7 @@ struct BenchmarkResultsView: View {
                          stats: &stats)
 
             // Interval fields
-            let gtIntervals = workout.intervals.sorted(by: { $0.orderIndex < $1.orderIndex })
+            let gtIntervals = (workout.intervals ?? []).sorted(by: { $0.orderIndex < $1.orderIndex })
             for (index, gtInterval) in gtIntervals.enumerated() {
                 guard index < parsedTable.rows.count else { continue }
                 let parsedRow = parsedTable.rows[index]

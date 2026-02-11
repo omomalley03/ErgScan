@@ -3,16 +3,16 @@ import SwiftData
 
 @Model
 final class Goal {
-    var id: UUID
-    var weeklyMeterGoal: Int
-    var monthlyMeterGoal: Int
-    var targetUT2Percent: Int
-    var targetUT1Percent: Int
-    var targetATPercent: Int
-    var targetMaxPercent: Int
+    var id: UUID = UUID()
+    var weeklyMeterGoal: Int = 0
+    var monthlyMeterGoal: Int = 0
+    var targetUT2Percent: Int = 60
+    var targetUT1Percent: Int = 25
+    var targetATPercent: Int = 10
+    var targetMaxPercent: Int = 5
     var userID: String?
-    var lastModifiedAt: Date
-    var syncedToCloud: Bool
+    var lastModifiedAt: Date = Date()
+    var syncedToCloud: Bool = false
 
     init(
         weeklyMeterGoal: Int = 0,

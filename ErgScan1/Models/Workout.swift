@@ -8,24 +8,24 @@ enum WorkoutCategory: String, Codable {
 
 @Model
 final class Workout {
-    var id: UUID
-    var date: Date                      // Extracted from monitor
-    var workoutType: String             // e.g., "3x4:00/3:00r" or "2000m"
-    var category: WorkoutCategory       // single or interval
-    var totalTime: String               // e.g., "21:00.3"
+    var id: UUID = UUID()
+    var date: Date = Date()             // Extracted from monitor
+    var workoutType: String = ""        // e.g., "3x4:00/3:00r" or "2000m"
+    var category: WorkoutCategory = WorkoutCategory.single  // single or interval
+    var totalTime: String = ""          // e.g., "21:00.3"
     var totalDistance: Int?             // Total meters (e.g., 2000, 3845)
-    var createdAt: Date
-    var lastModifiedAt: Date
+    var createdAt: Date = Date()
+    var lastModifiedAt: Date = Date()
 
     @Attribute(.externalStorage)
     var imageData: Data?                // Last captured image (JPEG compressed)
 
     @Relationship(deleteRule: .cascade)
-    var intervals: [Interval] = []      // For interval: actual intervals
+    var intervals: [Interval]?          // For interval: actual intervals
                                         // For single: splits of the piece
 
-    var ocrConfidence: Double           // Average confidence across all fields
-    var wasManuallyEdited: Bool         // Track if user corrected data
+    var ocrConfidence: Double = 0.0     // Average confidence across all fields
+    var wasManuallyEdited: Bool = false  // Track if user corrected data
     var isErgTest: Bool = false          // Whether this is an erg test piece
 
     // Training intensity zone
@@ -44,7 +44,7 @@ final class Workout {
 
     // Average split from the averages interval (orderIndex == 0)
     var averageSplit: String? {
-        intervals.first(where: { $0.orderIndex == 0 })?.splitPer500m
+        (intervals ?? [Interval]()).first(where: { $0.orderIndex == 0 })?.splitPer500m
     }
 
     // User relationship for CloudKit sync

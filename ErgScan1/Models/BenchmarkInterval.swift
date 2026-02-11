@@ -4,9 +4,9 @@ import SwiftData
 /// Ground truth interval/split data for benchmark testing
 @Model
 final class BenchmarkInterval {
-    var id: UUID
+    var id: UUID = UUID()
     var workout: BenchmarkWorkout?
-    var orderIndex: Int
+    var orderIndex: Int = 0
 
     // Core metrics (ground truth from locked RecognizedTable.rows)
     var time: String?
