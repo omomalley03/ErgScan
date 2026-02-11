@@ -76,6 +76,7 @@ struct EditWorkoutView: View {
                 }
             }
         }
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle("Edit Workout")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {

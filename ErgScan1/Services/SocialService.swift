@@ -329,16 +329,26 @@ class SocialService: ObservableObject {
         guard let userID = currentUserID else { return }
 
         do {
-            // Check for existing request in either direction
-            let existingPredicate = NSPredicate(
-                format: "(senderID == %@ AND receiverID == %@) OR (senderID == %@ AND receiverID == %@)",
-                userID, receiverID, receiverID, userID
-            )
-            let existingQuery = CKQuery(recordType: "FriendRequest", predicate: existingPredicate)
-            let (existing, _) = try await publicDB.records(matching: existingQuery, resultsLimit: 1)
-            guard existing.isEmpty else {
+            // Check for existing request (skip if record type doesn't exist yet)
+            var alreadyExists = false
+            do {
+                let outgoingPredicate = NSPredicate(format: "senderID == %@ AND receiverID == %@", userID, receiverID)
+                let outgoingQuery = CKQuery(recordType: "FriendRequest", predicate: outgoingPredicate)
+                let (outgoing, _) = try await publicDB.records(matching: outgoingQuery, resultsLimit: 1)
+
+                let incomingPredicate = NSPredicate(format: "senderID == %@ AND receiverID == %@", receiverID, userID)
+                let incomingQuery = CKQuery(recordType: "FriendRequest", predicate: incomingPredicate)
+                let (incoming, _) = try await publicDB.records(matching: incomingQuery, resultsLimit: 1)
+
+                alreadyExists = !outgoing.isEmpty || !incoming.isEmpty
+            } catch let error as CKError where error.code == .unknownItem {
+                // Record type doesn't exist yet — no requests exist, proceed to create first one
+                print("ℹ️ FriendRequest type doesn't exist yet — will be created on first save")
+            }
+
+            guard !alreadyExists else {
                 sentRequestIDs.insert(receiverID)
-                return // Already exists
+                return
             }
 
             let myUsername = myProfile?["username"] as? String ?? ""
@@ -378,16 +388,32 @@ class SocialService: ObservableObject {
         guard let userID = currentUserID else { return }
 
         do {
+            // Get pending requests sent to me
             let predicate = NSPredicate(format: "receiverID == %@ AND status == %@", userID, "pending")
             let query = CKQuery(recordType: "FriendRequest", predicate: predicate)
             query.sortDescriptors = [NSSortDescriptor(key: "createdAt", ascending: false)]
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 50)
 
+            // Get my response records (to filter out already-handled requests)
+            let responsePredicate = NSPredicate(format: "senderID == %@", userID)
+            let responseQuery = CKQuery(recordType: "FriendRequest", predicate: responsePredicate)
+            let (responseResults, _) = try await publicDB.records(matching: responseQuery, resultsLimit: 100)
+
+            let respondedToIDs = Set(responseResults.compactMap { _, result -> String? in
+                guard case .success(let record) = result,
+                      let status = record["status"] as? String,
+                      status == "accepted" || status == "rejected" else { return nil }
+                return record["receiverID"] as? String
+            })
+
             pendingRequests = results.compactMap { recordID, result in
                 guard case .success(let record) = result else { return nil }
+                let senderID = record["senderID"] as? String ?? ""
+                // Skip if we've already responded to this sender
+                guard !respondedToIDs.contains(senderID) else { return nil }
                 return FriendRequestResult(
                     id: recordID.recordName,
-                    senderID: record["senderID"] as? String ?? "",
+                    senderID: senderID,
                     senderUsername: record["senderUsername"] as? String ?? "",
                     senderDisplayName: record["senderDisplayName"] as? String ?? "",
                     status: record["status"] as? String ?? "",
@@ -395,16 +421,28 @@ class SocialService: ObservableObject {
                     record: record
                 )
             }
+        } catch let error as CKError where error.code == .unknownItem {
+            // Record type doesn't exist yet — no requests
+            pendingRequests = []
         } catch {
             print("⚠️ Failed to load pending requests: \(error)")
         }
     }
 
     func acceptRequest(_ request: FriendRequestResult) async {
+        guard let userID = currentUserID else { return }
+
         do {
-            let record = request.record
+            // Create a NEW acceptance record owned by the receiver (us)
+            // CloudKit only lets the creator modify their records, so we can't edit the sender's record
+            let record = CKRecord(recordType: "FriendRequest")
+            record["senderID"] = userID
+            record["receiverID"] = request.senderID
+            record["senderUsername"] = myProfile?["username"] as? String ?? ""
+            record["senderDisplayName"] = myProfile?["displayName"] as? String ?? ""
             record["status"] = "accepted"
-            record["updatedAt"] = Date() as NSDate
+            record["createdAt"] = Date() as NSDate
+
             _ = try await publicDB.save(record)
 
             // Remove from pending, refresh friends
@@ -419,10 +457,16 @@ class SocialService: ObservableObject {
     }
 
     func rejectRequest(_ request: FriendRequestResult) async {
+        guard let userID = currentUserID else { return }
+
         do {
-            let record = request.record
+            // Create a rejection record owned by us
+            let record = CKRecord(recordType: "FriendRequest")
+            record["senderID"] = userID
+            record["receiverID"] = request.senderID
             record["status"] = "rejected"
-            record["updatedAt"] = Date() as NSDate
+            record["createdAt"] = Date() as NSDate
+
             _ = try await publicDB.save(record)
             pendingRequests.removeAll { $0.id == request.id }
             HapticService.shared.lightImpact()
@@ -483,6 +527,9 @@ class SocialService: ObservableObject {
             }
 
             friends = profiles
+        } catch let error as CKError where error.code == .unknownItem {
+            // Record type doesn't exist yet — no friends
+            friends = []
         } catch {
             print("⚠️ Failed to load friends: \(error)")
         }
@@ -508,16 +555,20 @@ class SocialService: ObservableObject {
 
         do {
             // Check for existing shared workout with same localWorkoutID (dedup)
-            let dedupPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
-            let dedupQuery = CKQuery(recordType: "SharedWorkout", predicate: dedupPredicate)
-            let (existing, _) = try await publicDB.records(matching: dedupQuery, resultsLimit: 1)
-
-            let record: CKRecord
-            if let (_, result) = existing.first, case .success(let existingRecord) = result {
-                record = existingRecord
-            } else {
-                record = CKRecord(recordType: "SharedWorkout")
+            // Skip if record type doesn't exist yet
+            var existingRecord: CKRecord? = nil
+            do {
+                let dedupPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
+                let dedupQuery = CKQuery(recordType: "SharedWorkout", predicate: dedupPredicate)
+                let (existing, _) = try await publicDB.records(matching: dedupQuery, resultsLimit: 1)
+                if let (_, result) = existing.first, case .success(let record) = result {
+                    existingRecord = record
+                }
+            } catch let error as CKError where error.code == .unknownItem {
+                print("ℹ️ SharedWorkout type doesn't exist yet — will be created on first save")
             }
+
+            let record = existingRecord ?? CKRecord(recordType: "SharedWorkout")
 
             record["ownerID"] = userID
             record["ownerUsername"] = username
@@ -581,6 +632,9 @@ class SocialService: ObservableObject {
 
             // Sort all by date descending
             friendActivity = allWorkouts.sorted { $0.workoutDate > $1.workoutDate }
+        } catch let error as CKError where error.code == .unknownItem {
+            // SharedWorkout type doesn't exist yet — no activity
+            friendActivity = []
         } catch {
             print("⚠️ Failed to load friend activity: \(error)")
             errorMessage = "Could not load activity feed."

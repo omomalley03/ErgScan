@@ -52,7 +52,7 @@ struct FriendsView: View {
                             Image(systemName: "magnifyingglass")
                                 .foregroundColor(.secondary)
 
-                            TextField("Search by username or name", text: $searchText)
+                            TextField("Search by username or name to add", text: $searchText)
                                 .textInputAutocapitalization(.never)
                                 .autocorrectionDisabled()
                                 .onChange(of: searchText) { _, newValue in
@@ -93,10 +93,12 @@ struct FriendsView: View {
                                     .font(.headline)
                                     .padding(.horizontal)
 
+                                let friendIDs = Set(socialService.friends.map { $0.id })
                                 ForEach(socialService.searchResults) { user in
                                     UserSearchResultRow(
                                         user: user,
                                         sentRequestIDs: socialService.sentRequestIDs,
+                                        friendIDs: friendIDs,
                                         onAddFriend: {
                                             Task {
                                                 await socialService.sendFriendRequest(to: user.id)
@@ -182,6 +184,7 @@ struct FriendsView: View {
                 }
                 .padding(.vertical)
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Friends")
             .refreshable {
                 if hasUsername {

@@ -204,6 +204,7 @@ struct SettingsView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Settings")
             .onAppear {
                 if let username = currentUser?.username, !username.isEmpty {

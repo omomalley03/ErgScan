@@ -162,6 +162,7 @@ struct GoalsView: View {
                     }
                 }
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Goals")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

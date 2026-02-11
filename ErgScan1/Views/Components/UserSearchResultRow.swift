@@ -10,7 +10,12 @@ import SwiftUI
 struct UserSearchResultRow: View {
     let user: SocialService.UserProfileResult
     let sentRequestIDs: Set<String>
+    let friendIDs: Set<String>
     let onAddFriend: () -> Void
+
+    private var isFriend: Bool {
+        friendIDs.contains(user.id)
+    }
 
     private var alreadyRequested: Bool {
         sentRequestIDs.contains(user.id)
@@ -38,7 +43,16 @@ struct UserSearchResultRow: View {
 
             Spacer()
 
-            if alreadyRequested {
+            if isFriend {
+                Text("Friends")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(8)
+            } else if alreadyRequested {
                 Text("Requested")
                     .font(.caption)
                     .foregroundColor(.secondary)
