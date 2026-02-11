@@ -7,6 +7,7 @@ struct ScannerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
     @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var socialService: SocialService
     @StateObject private var viewModel = ScannerViewModel()
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
@@ -52,7 +53,21 @@ struct ScannerView: View {
                         table: table,
                         onSave: { editedDate, selectedZone, isErgTest in
                             Task {
-                                await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest)
+                                if let savedWorkout = await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest) {
+                                    // Publish to friends if user has a username
+                                    if let username = currentUser?.username, !username.isEmpty {
+                                        await socialService.publishWorkout(
+                                            workoutType: savedWorkout.workoutType,
+                                            date: savedWorkout.date,
+                                            totalTime: savedWorkout.totalTime,
+                                            totalDistance: savedWorkout.totalDistance ?? 0,
+                                            averageSplit: savedWorkout.averageSplit ?? "",
+                                            intensityZone: savedWorkout.intensityZone ?? "",
+                                            isErgTest: savedWorkout.isErgTest,
+                                            localWorkoutID: savedWorkout.id.uuidString
+                                        )
+                                    }
+                                }
                             }
                         },
                         onRetake: {

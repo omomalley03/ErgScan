@@ -1,11 +1,19 @@
 import SwiftUI
 import SwiftData
+import CloudKit
 
 struct SettingsView: View {
     @Environment(\.currentUser) private var currentUser
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var authService: AuthenticationService
     @EnvironmentObject var themeViewModel: ThemeViewModel
+    @EnvironmentObject var socialService: SocialService
     @State private var showingSignOutAlert = false
+    @State private var usernameInput = ""
+    @State private var debounceTask: Task<Void, Never>?
+    @State private var saveError: String?
+    @State private var showSuccessAlert = false
+    @State private var isSaving = false
 
     var body: some View {
         NavigationStack {
@@ -34,6 +42,113 @@ struct SettingsView: View {
                             }
                         }
                         .padding(.vertical, 8)
+                    }
+                }
+
+                // Username Section
+                Section("Username") {
+                    HStack {
+                        TextField("Choose a username", text: $usernameInput)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .onChange(of: usernameInput) { _, newValue in
+                                debounceTask?.cancel()
+
+                                // Reset status if empty
+                                if newValue.trimmingCharacters(in: .whitespaces).isEmpty {
+                                    socialService.usernameStatus = .unchecked
+                                    return
+                                }
+
+                                debounceTask = Task {
+                                    try? await Task.sleep(for: .milliseconds(500))
+                                    if !Task.isCancelled {
+                                        await socialService.checkUsernameAvailability(newValue)
+                                    }
+                                }
+                            }
+
+                        // Availability indicator
+                        switch socialService.usernameStatus {
+                        case .checking:
+                            ProgressView()
+                                .scaleEffect(0.8)
+                        case .available:
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundColor(.green)
+                        case .taken, .invalid:
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.red)
+                        case .unchecked:
+                            if !usernameInput.isEmpty && !socialService.errorMessage.isNilOrEmpty {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                            } else {
+                                EmptyView()
+                            }
+                        }
+                    }
+
+                    Button("Save Username") {
+                        Task {
+                            isSaving = true
+                            saveError = nil
+
+                            if let user = currentUser {
+                                do {
+                                    try await socialService.saveUsername(
+                                        usernameInput,
+                                        displayName: user.fullName ?? "User",
+                                        context: modelContext
+                                    )
+                                    await MainActor.run {
+                                        showSuccessAlert = true
+                                        isSaving = false
+                                    }
+                                } catch {
+                                    await MainActor.run {
+                                        saveError = error.localizedDescription
+                                        isSaving = false
+                                    }
+                                }
+                            } else {
+                                await MainActor.run {
+                                    saveError = "No user found"
+                                    isSaving = false
+                                }
+                            }
+                        }
+                    }
+                    .disabled(socialService.usernameStatus != .available || isSaving)
+
+                    // Retry check when CloudKit check failed
+                    if socialService.usernameStatus == .unchecked && !socialService.errorMessage.isNilOrEmpty {
+                        Button("Retry Check") {
+                            Task {
+                                socialService.errorMessage = nil
+                                await socialService.checkUsernameAvailability(usernameInput)
+                            }
+                        }
+                        .foregroundColor(.blue)
+                        .disabled(isSaving || usernameInput.count < 3)
+                    }
+
+                    Text("3-20 characters, letters/numbers/underscores")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if socialService.usernameStatus == .taken {
+                        Text("Username already taken")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    } else if socialService.usernameStatus == .invalid {
+                        Text("Invalid username format")
+                            .font(.caption)
+                            .foregroundColor(.red)
+                    } else if socialService.usernameStatus == .unchecked && !socialService.errorMessage.isNilOrEmpty {
+                        Text(socialService.errorMessage ?? "Error checking username")
+                            .font(.caption)
+                            .foregroundColor(.orange)
                     }
                 }
 
@@ -90,6 +205,13 @@ struct SettingsView: View {
                 }
             }
             .navigationTitle("Settings")
+            .onAppear {
+                if let username = currentUser?.username, !username.isEmpty {
+                    usernameInput = username
+                } else if let cloudUsername = socialService.myProfile?["username"] as? String {
+                    usernameInput = cloudUsername
+                }
+            }
             .alert("Sign Out", isPresented: $showingSignOutAlert) {
                 Button("Cancel", role: .cancel) { }
                 Button("Sign Out", role: .destructive) {
@@ -100,6 +222,18 @@ struct SettingsView: View {
             } message: {
                 Text("Your workouts will remain in iCloud and sync when you sign in again.")
             }
+            .alert("Success", isPresented: $showSuccessAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Username saved successfully!")
+            }
+            .alert("Error", isPresented: .constant(saveError != nil)) {
+                Button("OK", role: .cancel) {
+                    saveError = nil
+                }
+            } message: {
+                Text(saveError ?? "Unknown error")
+            }
         }
     }
 }
@@ -107,4 +241,10 @@ struct SettingsView: View {
 #Preview {
     SettingsView()
         .environmentObject(AuthenticationService())
+}
+
+extension Optional where Wrapped == String {
+    var isNilOrEmpty: Bool {
+        self?.isEmpty ?? true
+    }
 }

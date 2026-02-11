@@ -12,6 +12,7 @@ import SwiftData
 struct ErgScan1App: App {
     @StateObject private var authService = AuthenticationService()
     @StateObject private var themeViewModel = ThemeViewModel()
+    @StateObject private var socialService = SocialService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -26,17 +27,24 @@ struct ErgScan1App: App {
 
         // Try CloudKit first
         do {
+            print("🔵 Attempting to create ModelContainer with CloudKit sync...")
+            print("   Container: iCloud.com.omomalley03.ErgScan1")
             let cloudKitConfig = ModelConfiguration(
                 schema: schema,
                 isStoredInMemoryOnly: false,
                 cloudKitDatabase: .private("iCloud.com.omomalley03.ErgScan1")
             )
             let container = try ModelContainer(for: schema, configurations: [cloudKitConfig])
-            print("✅ ModelContainer created with CloudKit sync enabled!")
+            print("✅ SUCCESS: ModelContainer created with CloudKit sync enabled!")
+            print("   Your workouts WILL sync to iCloud")
             return container
         } catch {
-            print("⚠️ CloudKit failed: \(error)")
+            print("❌ CLOUDKIT SYNC FAILED!")
+            print("   Error: \(error)")
+            print("   Error type: \(type(of: error))")
+            print("   Localized: \(error.localizedDescription)")
             print("🔄 Falling back to local-only storage...")
+            print("⚠️  WARNING: Workouts will NOT sync to iCloud in this mode!")
 
             // Fallback to local-only
             do {
@@ -62,6 +70,7 @@ struct ErgScan1App: App {
         .modelContainer(sharedModelContainer)
         .environmentObject(authService)
         .environmentObject(themeViewModel)
+        .environmentObject(socialService)
     }
 }
 
@@ -70,6 +79,7 @@ struct ContentViewWrapper: View {
     @ObservedObject var authService: AuthenticationService
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var themeViewModel: ThemeViewModel
+    @EnvironmentObject var socialService: SocialService
 
     var body: some View {
         Group {
@@ -78,6 +88,9 @@ struct ContentViewWrapper: View {
                 MainTabView()
                     .environment(\.currentUser, user)
                     .environmentObject(themeViewModel)
+                    .onAppear {
+                        socialService.setCurrentUser(user.appleUserID, context: modelContext)
+                    }
             } else {
                 AuthenticationView(authService: authService)
                     .environmentObject(themeViewModel)

@@ -6,6 +6,8 @@ struct EditWorkoutView: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var socialService: SocialService
 
     @Bindable var workout: Workout
 
@@ -94,7 +96,7 @@ struct EditWorkoutView: View {
     // MARK: - Computed Properties
 
     private var sortedIntervals: [Interval] {
-        workout.intervals.sorted { $0.orderIndex < $1.orderIndex }
+        (workout.intervals ?? []).sorted { $0.orderIndex < $1.orderIndex }
     }
 
     // MARK: - Actions
@@ -105,6 +107,23 @@ struct EditWorkoutView: View {
 
         do {
             try modelContext.save()
+
+            // Publish to friends if user has a username
+            if let username = currentUser?.username, !username.isEmpty {
+                Task {
+                    await socialService.publishWorkout(
+                        workoutType: workout.workoutType,
+                        date: workout.date,
+                        totalTime: workout.totalTime,
+                        totalDistance: workout.totalDistance ?? 0,
+                        averageSplit: workout.averageSplit ?? "",
+                        intensityZone: workout.intensityZone ?? "",
+                        isErgTest: workout.isErgTest,
+                        localWorkoutID: workout.id.uuidString
+                    )
+                }
+            }
+
             dismiss()
         } catch {
             print("Error saving workout: \(error)")
@@ -220,7 +239,8 @@ struct IntervalEditSection: View {
         rateConfidence: 0.92
     )
 
-    workout.intervals.append(interval)
+    if workout.intervals == nil { workout.intervals = [] }
+    workout.intervals?.append(interval)
     container.mainContext.insert(workout)
 
     return NavigationStack {

@@ -160,7 +160,7 @@ struct BenchmarkListView: View {
     }
 
     private func averageAccuracy(_ workout: BenchmarkWorkout) -> Double {
-        let imagesWithAccuracy = workout.images.filter { $0.accuracyScore != nil }
+        let imagesWithAccuracy = (workout.images ?? []).filter { $0.accuracyScore != nil }
         guard !imagesWithAccuracy.isEmpty else { return 0.0 }
 
         let total = imagesWithAccuracy.reduce(0.0) { $0 + ($1.accuracyScore ?? 0) }
@@ -237,7 +237,7 @@ struct BenchmarkRowView: View {
                     Text("•")
                         .foregroundColor(.secondary)
 
-                    Text("\(benchmark.images.count) image\(benchmark.images.count == 1 ? "" : "s")")
+                    Text("\((benchmark.images ?? []).count) image\((benchmark.images ?? []).count == 1 ? "" : "s")")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -262,7 +262,7 @@ struct BenchmarkRowView: View {
     }
 
     private var averageAccuracy: Double? {
-        let imagesWithAccuracy = benchmark.images.filter { $0.accuracyScore != nil }
+        let imagesWithAccuracy = (benchmark.images ?? []).filter { $0.accuracyScore != nil }
         guard !imagesWithAccuracy.isEmpty else { return nil }
 
         let total = imagesWithAccuracy.reduce(0.0) { $0 + ($1.accuracyScore ?? 0) }

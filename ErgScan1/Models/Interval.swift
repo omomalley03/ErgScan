@@ -3,21 +3,21 @@ import SwiftData
 
 @Model
 final class Interval {
-    var id: UUID
+    var id: UUID = UUID()
     var workout: Workout?
-    var orderIndex: Int                 // Row position in table
+    var orderIndex: Int = 0             // Row position in table
 
-    var time: String                    // "4:00.0"
-    var meters: String                  // "1179"
-    var splitPer500m: String            // "1:41.2"
-    var strokeRate: String              // "29"
+    var time: String = ""               // "4:00.0"
+    var meters: String = ""             // "1179"
+    var splitPer500m: String = ""       // "1:41.2"
+    var strokeRate: String = ""         // "29"
     var heartRate: String?              // "145" (optional, only when HR monitor connected)
 
-    var timeConfidence: Double          // Per-field confidence scores
-    var metersConfidence: Double
-    var splitConfidence: Double
-    var rateConfidence: Double
-    var heartRateConfidence: Double
+    var timeConfidence: Double = 0.0    // Per-field confidence scores
+    var metersConfidence: Double = 0.0
+    var splitConfidence: Double = 0.0
+    var rateConfidence: Double = 0.0
+    var heartRateConfidence: Double = 0.0
 
     // CloudKit sync metadata (syncs via Workout relationship)
     var syncedToCloud: Bool = false

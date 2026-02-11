@@ -8,13 +8,13 @@ struct EnhancedWorkoutDetailView: View {
     @State private var showEditSheet = false
 
     var sortedIntervals: [Interval] {
-        workout.intervals
+        (workout.intervals ?? [])
             .filter { $0.orderIndex >= 1 }
             .sorted(by: { $0.orderIndex < $1.orderIndex })
     }
 
     var averagesInterval: Interval? {
-        workout.intervals.first(where: { $0.orderIndex == 0 })
+        (workout.intervals ?? []).first(where: { $0.orderIndex == 0 })
     }
 
     var body: some View {
