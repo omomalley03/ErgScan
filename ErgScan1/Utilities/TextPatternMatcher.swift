@@ -34,7 +34,16 @@ struct TextPatternMatcher {
     static let datePattern = #"^[A-Za-z]{3}:?\s*\d{1,2}[\s.]+\d{4}$"#
 
     /// Interval workout type: "3x4:00/3:00r" or "12x500m/1:30r"
-    static let intervalTypePattern = #"^\d{1,2}x[\d:]+[rm]?/[\d:]+r?$"#
+    /// Variable intervals: "v40:00/2:00r", "W40:00/2:00r", "и40:00/2:00r", etc.
+    /// The key: variable intervals have non-digit prefix(es) before the time/distance
+    /// [^\dx]* matches zero or more characters that are NOT digits and NOT 'x'
+    static let intervalTypePattern = #"^[^\dx]*\d{1,2}x[\d:]+[rm]?/[\d:]+r?$"#
+
+    /// Truncated variable interval pattern: "v40:00/2:00r" (after ellipsis stripped)
+    /// PM5 shows this format when the full descriptor is too long to fit on screen
+    /// Starts with non-digit prefix, then time/distance/rest, but NO "Nx" pattern
+    static let truncatedIntervalPattern = #"^[^\d]+[\d:]+[rm]?/[\d:]+r?$"#
+
 
     /// Single piece workout type: "2000m" or "4:00" or "30:00"
     static let singleTypePattern = #"^(\d+m|\d+:\d{2})$"#
@@ -85,6 +94,24 @@ struct TextPatternMatcher {
                     let beforeX = String(result[..<xRange.upperBound])
                     result = beforeX + firstTime + "/" + rest
                 }
+            }
+        }
+
+        // 6. Strip trailing ellipsis + count from variable interval descriptors
+        // e.g., "v40:00/2:00r...4" → "v40:00/2:00r" or "₩40:00/2:00r.4" → "₩40:00/2:00r"
+        // The "...N" or ".N" is the rep count indicator the PM5 appends when truncating
+        // UPDATED: Now matches single dot too (\.+ instead of \.{2,})
+        result = result.replacingOccurrences(of: #"\.+\d*$"#, with: "", options: .regularExpression)
+
+        // 7. Normalize variable interval prefix to "v"
+        // The PM5 "v" is frequently misread as: ₩ (Korean Won), W, w, V, и (Cyrillic), ν (Greek), etc.
+        // If the string starts with non-digit character(s) and contains "/" (rest separator),
+        // replace the prefix with "v" for consistent downstream handling.
+        if let firstDigitIndex = result.firstIndex(where: { $0.isNumber }) {
+            let prefix = String(result[result.startIndex..<firstDigitIndex])
+            if !prefix.isEmpty && result.contains("/") {
+                // This is likely a variable interval descriptor (has prefix + contains rest separator)
+                result = "v" + String(result[firstDigitIndex...])
             }
         }
 
@@ -277,6 +304,7 @@ struct TextPatternMatcher {
 
     func matchWorkoutType(_ text: String) -> Bool {
         matches(text, pattern: Self.intervalTypePattern) ||
+        matches(text, pattern: Self.truncatedIntervalPattern) ||
         matches(text, pattern: Self.singleTypePattern)
     }
 
@@ -317,41 +345,72 @@ struct TextPatternMatcher {
     // MARK: - Interval Workout Parsing
 
     /// Parse interval workout string like "3x4:00/3:00r" or "12x500m/1:30r"
-    /// Returns (reps, workTime, restTime) or nil if not a valid interval format
-    func parseIntervalWorkout(_ text: String) -> (reps: Int, workTime: String, restTime: String)? {
-        // Pattern: capture groups for reps, work time, and rest time
-        let pattern = #"^(\d{1,2})x([\d:]+[rm]?)/([\d:]+)r?$"#
+    /// Also handles variable intervals:
+    /// - Standard format: "v4x40:00/2:00r" (has "Nx" pattern)
+    /// - Truncated format: "v40:00/2:00r" (no "Nx", PM5 truncates when too long)
+    /// Returns (reps, workTime, restTime, isVariable) or nil if not a valid interval format
+    /// Note: For truncated format, reps=1 is returned as placeholder (corrected later from data rows)
+    func parseIntervalWorkout(_ text: String) -> (reps: Int, workTime: String, restTime: String, isVariable: Bool)? {
+        var cleaned = text
+        var isVariable = false
 
-        guard let regex = try? NSRegularExpression(pattern: pattern) else {
-            return nil
+        // Check if it starts with non-digit (variable interval indicator)
+        if let first = cleaned.first, !first.isNumber {
+            isVariable = true
         }
 
-        let range = NSRange(text.startIndex..., in: text)
-        guard let match = regex.firstMatch(in: text, range: range) else {
-            return nil
+        // Strip leading non-digit characters (the variable prefix)
+        while let first = cleaned.first, !first.isNumber {
+            cleaned = String(cleaned.dropFirst())
         }
 
-        // Extract captured groups
-        guard match.numberOfRanges == 4 else { return nil }
+        // Try standard format first: "4x40:00/2:00r" (has "Nx" pattern)
+        let standardPattern = #"^(\d{1,2})x([\d:]+[rm]?)/([\d:]+)r?$"#
+        if let regex = try? NSRegularExpression(pattern: standardPattern),
+           let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)),
+           match.numberOfRanges == 4,
+           let repsRange = Range(match.range(at: 1), in: cleaned),
+           let workTimeRange = Range(match.range(at: 2), in: cleaned),
+           let restTimeRange = Range(match.range(at: 3), in: cleaned) {
 
-        guard let repsRange = Range(match.range(at: 1), in: text),
-              let workTimeRange = Range(match.range(at: 2), in: text),
-              let restTimeRange = Range(match.range(at: 3), in: text) else {
-            return nil
+            let repsString = String(cleaned[repsRange])
+            let workTime = String(cleaned[workTimeRange])
+            let restTime = String(cleaned[restTimeRange])
+
+            if let reps = Int(repsString) {
+                return (reps, workTime, restTime, isVariable)
+            }
         }
 
-        let repsString = String(text[repsRange])
-        let workTime = String(text[workTimeRange])
-        let restTime = String(text[restTimeRange])
+        // Try truncated format: "40:00/2:00r" (no "Nx", just time/rest)
+        // This is the format PM5 shows for variable intervals when descriptor is too long
+        if isVariable {
+            let truncatedPattern = #"^([\d:]+[rm]?)/([\d:]+)r?$"#
+            if let regex = try? NSRegularExpression(pattern: truncatedPattern),
+               let match = regex.firstMatch(in: cleaned, range: NSRange(cleaned.startIndex..., in: cleaned)),
+               match.numberOfRanges == 3,
+               let workTimeRange = Range(match.range(at: 1), in: cleaned),
+               let restTimeRange = Range(match.range(at: 2), in: cleaned) {
 
-        guard let reps = Int(repsString) else { return nil }
+                let workTime = String(cleaned[workTimeRange])
+                let restTime = String(cleaned[restTimeRange])
 
-        return (reps, workTime, restTime)
+                // Return reps=1 as placeholder (will be corrected from data row count later)
+                return (1, workTime, restTime, true)
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Workout Category Detection
 
     func detectWorkoutCategory(_ workoutType: String) -> WorkoutCategory {
+        // Variable intervals: any non-digit prefix before the interval pattern
+        if let first = workoutType.first, !first.isNumber,
+           (workoutType.contains("/") || workoutType.hasSuffix("r")) {
+            return .interval
+        }
         if workoutType.contains("/") || workoutType.hasSuffix("r") {
             return .interval
         }

@@ -39,6 +39,7 @@ class ScannerViewModel: ObservableObject {
     // Debug properties (only computed when showDebugTabs is true)
     @Published var debugResults: [GuideRelativeOCRResult] = []
     @Published var parserDebugLog: String = ""
+    @Published var allCapturesLog: String = ""  // Combined logs from all 3 captures
 
     // MARK: - Services
 
@@ -105,24 +106,60 @@ class ScannerViewModel: ObservableObject {
         captureCount = 0
         hasTriggeredHaptic = false
         accumulatedTable = nil  // Reset accumulated data for new scan
+        allCapturesLog = ""  // Reset combined log
 
-        print("🚀 Starting iterative scanning...")
+        print("🚀 Starting 3-photo capture for benchmark...")
 
-        // Iteratively capture until complete (no limit on attempts)
-        while state == .capturing {
-            captureCount += 1
-            print("📸 Capture attempt \(captureCount)")
+        var combinedLog = "======================================\n"
+        combinedLog += "VARIABLE INTERVALS DEBUG LOG\n"
+        combinedLog += "3-Photo Capture Session\n"
+        combinedLog += "======================================\n\n"
+
+        // Capture exactly 3 photos for benchmark testing
+        for i in 1...3 {
+            captureCount = i
+            print("📸 Capture \(i) of 3")
 
             await captureAndProcess()
 
-            // Check if we should stop
-            if case .locked = state {
-                print("🔒 Locked with complete data")
-                break
+            // Append this capture's log
+            if i - 1 < capturedOCRResultsForBenchmark.count {
+                let captureLog = capturedOCRResultsForBenchmark[i - 1].debugLog
+                combinedLog += "========== CAPTURE \(i) OF 3 ==========\n\n"
+                combinedLog += captureLog
+                combinedLog += "\n\n"
             }
 
-            // Wait a moment before next capture (allow user to adjust framing)
-            try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 seconds
+            // Wait between captures (allow user to adjust framing if needed)
+            if i < 3 {
+                try? await Task.sleep(nanoseconds: 800_000_000) // 0.8 seconds
+            }
+        }
+
+        // Add final merged result summary
+        if let finalTable = accumulatedTable {
+            combinedLog += "======================================\n"
+            combinedLog += "FINAL MERGED RESULT\n"
+            combinedLog += "======================================\n"
+            combinedLog += "Workout Type: \(finalTable.workoutType ?? "nil")\n"
+            combinedLog += "Category: \(finalTable.category?.rawValue ?? "nil")\n"
+            combinedLog += "Is Variable Interval: \(finalTable.isVariableInterval ?? false)\n"
+            combinedLog += "Description: \(finalTable.description ?? "nil")\n"
+            combinedLog += "Reps: \(finalTable.reps ?? 0)\n"
+            combinedLog += "Work Per Rep: \(finalTable.workPerRep ?? "nil")\n"
+            combinedLog += "Rest Per Rep: \(finalTable.restPerRep ?? "nil")\n"
+            combinedLog += "Data Rows Parsed: \(finalTable.rows.count)\n"
+            combinedLog += "======================================\n"
+        }
+
+        allCapturesLog = combinedLog
+
+        // After 3 captures, export benchmark data with verbose logs
+        exportBenchmarkToFiles()
+
+        // Auto-lock after 3 captures with the accumulated table
+        if let table = accumulatedTable {
+            handleLocking(table: table)
         }
     }
 
@@ -230,6 +267,7 @@ class ScannerViewModel: ObservableObject {
         captureCount = 0
         debugResults = []
         parserDebugLog = ""
+        allCapturesLog = ""  // Clear combined log
         hasTriggeredHaptic = false
         capturedImagesForBenchmark = []  // Clear benchmark images
         capturedOCRResultsForBenchmark = []  // Clear OCR results
@@ -318,6 +356,165 @@ class ScannerViewModel: ObservableObject {
 
         // Clear captured images
         capturedImagesForBenchmark = []
+    }
+
+    // MARK: - Benchmark Export
+
+    private func exportBenchmarkToFiles() {
+        print("📤 Exporting benchmark data to files...")
+
+        // Create benchmark directory in Documents
+        let fileManager = FileManager.default
+        guard let documentsURL = fileManager.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            print("❌ Could not access documents directory")
+            return
+        }
+
+        let benchmarkURL = documentsURL.appendingPathComponent("Benchmarks")
+        let timestamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let sessionURL = benchmarkURL.appendingPathComponent("session_\(timestamp)")
+
+        // Create session directory
+        do {
+            try fileManager.createDirectory(at: sessionURL, withIntermediateDirectories: true)
+            print("✅ Created benchmark directory: \(sessionURL.path)")
+        } catch {
+            print("❌ Failed to create benchmark directory: \(error)")
+            return
+        }
+
+        // Save each captured image and its OCR data
+        for (index, image) in capturedImagesForBenchmark.enumerated() {
+            let captureNum = index + 1
+
+            // Save image as PNG
+            if let imageData = image.pngData() {
+                let imageURL = sessionURL.appendingPathComponent("capture_\(captureNum).png")
+                do {
+                    try imageData.write(to: imageURL)
+                    print("✅ Saved image \(captureNum): \(imageURL.lastPathComponent)")
+                } catch {
+                    print("❌ Failed to save image \(captureNum): \(error)")
+                }
+            }
+
+            // Save verbose OCR and parser data
+            if index < capturedOCRResultsForBenchmark.count {
+                let ocrData = capturedOCRResultsForBenchmark[index]
+
+                // Save parser debug log (most important for debugging)
+                let logURL = sessionURL.appendingPathComponent("capture_\(captureNum)_parser_log.txt")
+                do {
+                    try ocrData.debugLog.write(to: logURL, atomically: true, encoding: .utf8)
+                    print("✅ Saved parser log \(captureNum): \(logURL.lastPathComponent)")
+                } catch {
+                    print("❌ Failed to save parser log \(captureNum): \(error)")
+                }
+
+                // Save parsed table as JSON
+                let tableURL = sessionURL.appendingPathComponent("capture_\(captureNum)_parsed_table.json")
+                if let tableData = try? JSONEncoder().encode(ocrData.parsedTable),
+                   let jsonString = String(data: tableData, encoding: .utf8) {
+                    do {
+                        try jsonString.write(to: tableURL, atomically: true, encoding: .utf8)
+                        print("✅ Saved parsed table \(captureNum): \(tableURL.lastPathComponent)")
+                    } catch {
+                        print("❌ Failed to save parsed table \(captureNum): \(error)")
+                    }
+                }
+
+                // Save raw OCR results as JSON
+                let ocrURL = sessionURL.appendingPathComponent("capture_\(captureNum)_ocr_results.json")
+                if let ocrResultsData = try? JSONEncoder().encode(ocrData.ocrResults),
+                   let jsonString = String(data: ocrResultsData, encoding: .utf8) {
+                    do {
+                        try jsonString.write(to: ocrURL, atomically: true, encoding: .utf8)
+                        print("✅ Saved OCR results \(captureNum): \(ocrURL.lastPathComponent)")
+                    } catch {
+                        print("❌ Failed to save OCR results \(captureNum): \(error)")
+                    }
+                }
+            }
+        }
+
+        // Save merged/final table
+        if let finalTable = accumulatedTable {
+            let finalTableURL = sessionURL.appendingPathComponent("final_merged_table.json")
+            if let tableData = try? JSONEncoder().encode(finalTable),
+               let jsonString = String(data: tableData, encoding: .utf8) {
+                do {
+                    try jsonString.write(to: finalTableURL, atomically: true, encoding: .utf8)
+                    print("✅ Saved final merged table")
+                } catch {
+                    print("❌ Failed to save final merged table: \(error)")
+                }
+            }
+        }
+
+        // Save summary report
+        var summaryReport = """
+        ======================================
+        BENCHMARK SESSION REPORT
+        ======================================
+        Timestamp: \(timestamp)
+        Captures: \(capturedImagesForBenchmark.count)
+        Session Directory: \(sessionURL.path)
+
+        """
+
+        for (index, ocrData) in capturedOCRResultsForBenchmark.enumerated() {
+            let captureNum = index + 1
+            summaryReport += """
+
+            --- Capture \(captureNum) ---
+            OCR Results: \(ocrData.ocrResults.count)
+            Workout Type: \(ocrData.parsedTable.workoutType ?? "nil")
+            Category: \(ocrData.parsedTable.category?.rawValue ?? "nil")
+            Is Variable Interval: \(ocrData.parsedTable.isVariableInterval ?? false)
+            Reps: \(ocrData.parsedTable.reps ?? 0)
+            Data Rows: \(ocrData.parsedTable.rows.count)
+            Confidence: \(String(format: "%.1f%%", ocrData.parsedTable.averageConfidence * 100))
+            Completeness: \(String(format: "%.1f%%", ocrData.parsedTable.completenessScore * 100))
+
+            """
+        }
+
+        if let finalTable = accumulatedTable {
+            summaryReport += """
+
+            ======================================
+            FINAL MERGED RESULT
+            ======================================
+            Workout Type: \(finalTable.workoutType ?? "nil")
+            Category: \(finalTable.category?.rawValue ?? "nil")
+            Is Variable Interval: \(finalTable.isVariableInterval ?? false)
+            Description: \(finalTable.description ?? "nil")
+            Reps: \(finalTable.reps ?? 0)
+            Work Per Rep: \(finalTable.workPerRep ?? "nil")
+            Rest Per Rep: \(finalTable.restPerRep ?? "nil")
+            Total Time: \(finalTable.totalTime ?? "nil")
+            Total Distance: \(finalTable.totalDistance ?? 0)
+            Data Rows: \(finalTable.rows.count)
+            Average Confidence: \(String(format: "%.1f%%", finalTable.averageConfidence * 100))
+            Completeness Score: \(String(format: "%.1f%%", finalTable.completenessScore * 100))
+
+            """
+        }
+
+        summaryReport += """
+        ======================================
+        END OF REPORT
+        ======================================
+        """
+
+        let summaryURL = sessionURL.appendingPathComponent("SUMMARY.txt")
+        do {
+            try summaryReport.write(to: summaryURL, atomically: true, encoding: .utf8)
+            print("✅ Saved summary report")
+            print("📂 Benchmark saved to: \(sessionURL.path)")
+        } catch {
+            print("❌ Failed to save summary report: \(error)")
+        }
     }
 
     // MARK: - Field Editing

@@ -27,6 +27,7 @@ struct RecognizedTable {
     var reps: Int?                  // Interval count (nil for single)
     var workPerRep: String?         // "20:00" or "1000m" (nil for single)
     var restPerRep: String?         // "1:15" (nil for single)
+    var isVariableInterval: Bool?   // true for variable intervals, nil/false otherwise
     var totalDistance: Int?          // Total meters
     var averages: TableRow?         // Overall workout averages/summary row
     var rows: [TableRow]            // Interval results or split results
@@ -41,6 +42,7 @@ struct RecognizedTable {
         reps: Int? = nil,
         workPerRep: String? = nil,
         restPerRep: String? = nil,
+        isVariableInterval: Bool? = nil,
         totalDistance: Int? = nil,
         averages: TableRow? = nil,
         rows: [TableRow] = [],
@@ -54,6 +56,7 @@ struct RecognizedTable {
         self.reps = reps
         self.workPerRep = workPerRep
         self.restPerRep = restPerRep
+        self.isVariableInterval = isVariableInterval
         self.totalDistance = totalDistance
         self.averages = averages
         self.rows = rows

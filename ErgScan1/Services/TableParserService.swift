@@ -96,13 +96,16 @@ class TableParserService {
                 log("Attempting to parse as interval workout...")
                 if let interval = matcher.parseIntervalWorkout(desc) {
                     table.category = .interval
-                    table.workoutType = desc
+                    table.isVariableInterval = interval.isVariable
+                    table.workoutType = desc  // Temporary — will be replaced after parsing for variable
                     table.reps = interval.reps
-                    table.workPerRep = interval.workTime
+                    table.workPerRep = interval.isVariable ? nil : interval.workTime
                     table.restPerRep = interval.restTime
-                    log("✓ Classified as INTERVALS")
+                    log("✓ Classified as \(interval.isVariable ? "VARIABLE " : "")INTERVALS")
                     log("  Reps: \(interval.reps)")
-                    log("  Work per rep: \(interval.workTime)")
+                    if !interval.isVariable {
+                        log("  Work per rep: \(interval.workTime)")
+                    }
                     log("  Rest per rep: \(interval.restTime)")
                 } else {
                     log("Not an interval pattern, checking general workout type...")
@@ -194,6 +197,30 @@ class TableParserService {
         var dataRows: [TableRow] = []
         log("Parsing data rows starting from row \(dataStartIndex)...")
         for i in dataStartIndex..<rows.count {
+            // Skip rest rows (variable intervals have rest rows interleaved)
+            // Rest rows start with "r" followed by a time, e.g., "r2:00  23"
+            let rowText = rows[i].normalizedText.trimmingCharacters(in: .whitespaces)
+            if rowText.hasPrefix("r") && rowText.count >= 4 {
+                // Check if it's "rN:NN" pattern (rest duration)
+                let afterR = String(rowText.dropFirst())
+                if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
+                    log("  Row \(i): skipped (rest row: '\(rows[i].joinedText)')")
+                    continue
+                }
+            }
+
+            // Also check individual fragments — the "r2:00" might be a single fragment
+            if let firstFragment = rows[i].fragments.first {
+                let text = firstFragment.text.trimmingCharacters(in: .whitespaces)
+                if text.hasPrefix("r") && text.count >= 4 {
+                    let afterR = String(text.dropFirst())
+                    if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
+                        log("  Row \(i): skipped (rest row fragment: '\(text)')")
+                        continue
+                    }
+                }
+            }
+
             if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
                 dataRows.append(row)
                 log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
@@ -203,6 +230,31 @@ class TableParserService {
         }
         table.rows = dataRows
         log("Parsed \(dataRows.count) data rows total")
+
+        // Variable Interval Naming
+        // For variable intervals, the descriptor is truncated and unreliable.
+        // Generate the workout name from the parsed interval meters.
+        if table.isVariableInterval == true && !dataRows.isEmpty {
+            log("\n--- VARIABLE INTERVAL NAMING ---")
+            let metersComponents = dataRows.compactMap { row -> String? in
+                guard let meters = row.meters?.text else { return nil }
+                return "\(meters)m"
+            }
+            if !metersComponents.isEmpty {
+                let generatedName = metersComponents.joined(separator: " / ")
+                table.workoutType = generatedName
+                table.description = generatedName
+                log("✓ Generated variable interval name: \"\(generatedName)\"")
+            } else {
+                log("⚠️ Could not generate variable interval name (no meters parsed)")
+            }
+        }
+
+        // Update reps count from data rows for variable intervals
+        if table.isVariableInterval == true {
+            table.reps = dataRows.count
+            log("  Updated variable interval reps from data rows: \(dataRows.count)")
+        }
 
         // Phase 8: Fallback classification if descriptor was unreadable
         log("\n=== PHASE 8: FALLBACK CLASSIFICATION ===")

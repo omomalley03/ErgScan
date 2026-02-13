@@ -7,6 +7,7 @@ struct ScannerView: View {
     @Environment(\.modelContext) private var modelContext
     @StateObject private var viewModel = ScannerViewModel()
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
+    @State private var showDebugLogs = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,17 +47,38 @@ struct ScannerView: View {
                     capturingContent
 
                 case .locked(let table):
-                    EditableWorkoutForm(
-                        table: table,
-                        onSave: {
-                            Task {
-                                await viewModel.saveWorkout(context: modelContext)
+                    VStack(spacing: 0) {
+                        // Debug logs button
+                        if !viewModel.allCapturesLog.isEmpty {
+                            Button {
+                                showDebugLogs = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "doc.text.magnifyingglass")
+                                    Text("View Parser Logs (3 Captures)")
+                                }
+                                .font(.subheadline)
+                                .padding(8)
+                                .background(Color.blue.opacity(0.1))
+                                .foregroundColor(.blue)
+                                .cornerRadius(8)
                             }
-                        },
-                        onRetake: {
-                            viewModel.retake()
+                            .padding(.horizontal)
+                            .padding(.top, 8)
                         }
-                    )
+
+                        EditableWorkoutForm(
+                            table: table,
+                            onSave: {
+                                Task {
+                                    await viewModel.saveWorkout(context: modelContext)
+                                }
+                            },
+                            onRetake: {
+                                viewModel.retake()
+                            }
+                        )
+                    }
 
                 case .saved:
                     savedContent
@@ -77,6 +99,9 @@ struct ScannerView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .sheet(isPresented: $showDebugLogs) {
+            DebugLogsView(logs: viewModel.allCapturesLog)
         }
     }
 
@@ -210,6 +235,40 @@ struct ScannerView: View {
                 .cornerRadius(12)
             }
             .padding()
+        }
+    }
+}
+
+// MARK: - Debug Logs View
+
+struct DebugLogsView: View {
+    let logs: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            ScrollView {
+                Text(logs)
+                    .font(.system(.caption, design: .monospaced))
+                    .padding()
+                    .textSelection(.enabled)  // Enable text selection for copying
+            }
+            .navigationTitle("Parser Debug Logs")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        UIPasteboard.general.string = logs
+                    } label: {
+                        Label("Copy All", systemImage: "doc.on.doc")
+                    }
+                }
+            }
         }
     }
 }
