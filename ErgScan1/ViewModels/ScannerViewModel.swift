@@ -9,6 +9,7 @@ import AVFoundation
 enum ScanningState: Equatable {
     case ready          // Ready to start scanning
     case capturing      // Actively capturing and processing
+    case incompletePrompt(RecognizedTable, firstScan: Bool)  // Data meets locking criteria but is incomplete
     case locked(RecognizedTable)
     case saved
 
@@ -16,6 +17,8 @@ enum ScanningState: Equatable {
         switch (lhs, rhs) {
         case (.ready, .ready), (.capturing, .capturing), (.saved, .saved):
             return true
+        case (.incompletePrompt(let lTable, let lFirst), .incompletePrompt(let rTable, let rFirst)):
+            return lTable.stableHash == rTable.stableHash && lFirst == rFirst
         case (.locked(let lTable), .locked(let rTable)):
             return lTable.stableHash == rTable.stableHash
         default:
@@ -212,13 +215,55 @@ class ScannerViewModel: ObservableObject {
     private func handleLocking(table: RecognizedTable) {
         guard !hasTriggeredHaptic else { return }
 
-        // Trigger haptic feedback
+        // Check if data is complete
+        let completenessCheck = table.checkDataCompleteness()
+
+        if completenessCheck.isComplete {
+            // Data is complete — proceed to locked state
+            hapticService.triggerSuccess()
+            hasTriggeredHaptic = true
+            state = .locked(table)
+            print("✅ Workout locked with complete data!")
+        } else {
+            // Data meets locking criteria but is incomplete
+            state = .incompletePrompt(table, firstScan: true)
+            print("⚠️ Workout meets locking criteria but data appears incomplete")
+            if let reason = completenessCheck.reason {
+                print("   Reason: \(reason)")
+            }
+        }
+    }
+
+    // MARK: - Multi-Screen Scanning
+
+    func continueScanning() async {
+        guard case .incompletePrompt(let table, _) = state else { return }
+
+        // Return to capturing state (accumulatedTable is preserved)
+        state = .capturing
+
+        print("🔄 Continuing scan from incomplete data...")
+        print("   Current rows: \(table.rows.count)")
+
+        // Capture one more screen
+        await captureAndProcess()
+
+        // Re-check locking criteria
+        if let currentTable = accumulatedTable, isTableReadyToLock(currentTable) {
+            handleLocking(table: currentTable)
+        }
+    }
+
+    func acceptIncompleteData() {
+        guard case .incompletePrompt(let table, _) = state else { return }
+
+        // Proceed to locked state despite incomplete data
         hapticService.triggerSuccess()
         hasTriggeredHaptic = true
-
-        // Transition to locked state
         state = .locked(table)
-        print("✅ Workout locked!")
+
+        print("⚠️ User accepted incomplete data")
+        print("   Rows: \(table.rows.count)")
     }
 
     // MARK: - Retake
@@ -446,18 +491,20 @@ class ScannerViewModel: ObservableObject {
             return new
         }
 
+        let category = new.category ?? existing.category
         return RecognizedTable(
             workoutType: new.workoutType ?? existing.workoutType,
-            category: new.category ?? existing.category,
+            category: category,
             date: new.date ?? existing.date,
             totalTime: new.totalTime ?? existing.totalTime,
             description: new.description ?? existing.description,
             reps: new.reps ?? existing.reps,
             workPerRep: new.workPerRep ?? existing.workPerRep,
             restPerRep: new.restPerRep ?? existing.restPerRep,
+            isVariableInterval: new.isVariableInterval ?? existing.isVariableInterval,
             totalDistance: new.totalDistance ?? existing.totalDistance,
             averages: mergeRow(existing: existing.averages, new: new.averages),
-            rows: mergeRows(existing: existing.rows, new: new.rows),
+            rows: mergeRows(existing: existing.rows, new: new.rows, category: category),
             averageConfidence: max(existing.averageConfidence, new.averageConfidence)
         )
     }
@@ -476,8 +523,75 @@ class ScannerViewModel: ObservableObject {
         return merged
     }
 
-    /// Merge rows arrays, aligning by index and merging individual rows
-    private func mergeRows(existing: [TableRow], new: [TableRow]) -> [TableRow] {
+    /// Merge rows arrays with deduplication based on workout category
+    private func mergeRows(existing: [TableRow], new: [TableRow], category: WorkoutCategory?) -> [TableRow] {
+        guard !existing.isEmpty else { return new }
+
+        switch category {
+        case .interval:
+            return deduplicateIntervalRows(existing, new)
+        case .single:
+            return deduplicateSingleRows(existing, new)
+        case .none:
+            return indexBasedMerge(existing, new)
+        }
+    }
+
+    private func deduplicateIntervalRows(_ existing: [TableRow], _ new: [TableRow]) -> [TableRow] {
+        var result = existing
+
+        for newRow in new {
+            let isDuplicate = result.contains { existingRow in
+                rowsMatchForInterval(existingRow, newRow)
+            }
+
+            if !isDuplicate {
+                result.append(newRow)
+            }
+        }
+
+        return result
+    }
+
+    private func rowsMatchForInterval(_ row1: TableRow, _ row2: TableRow) -> Bool {
+        let metersMatch = row1.meters?.text == row2.meters?.text
+        let timeMatch = row1.time?.text == row2.time?.text
+        let rateMatch = row1.strokeRate?.text == row2.strokeRate?.text
+
+        return metersMatch && timeMatch && rateMatch
+    }
+
+    private func deduplicateSingleRows(_ existing: [TableRow], _ new: [TableRow]) -> [TableRow] {
+        var result = existing
+
+        for newRow in new {
+            let isDuplicate = result.contains { existingRow in
+                rowsMatchForSingle(existingRow, newRow)
+            }
+
+            if !isDuplicate {
+                result.append(newRow)
+            }
+        }
+
+        return result
+    }
+
+    private func rowsMatchForSingle(_ row1: TableRow, _ row2: TableRow) -> Bool {
+        // Match primarily on meters (distance splits)
+        if let m1 = row1.meters?.text, let m2 = row2.meters?.text {
+            return m1 == m2
+        }
+
+        // Fall back to time matching
+        if let t1 = row1.time?.text, let t2 = row2.time?.text {
+            return t1 == t2
+        }
+
+        return false
+    }
+
+    private func indexBasedMerge(_ existing: [TableRow], _ new: [TableRow]) -> [TableRow] {
         let maxCount = max(existing.count, new.count)
         var merged: [TableRow] = []
 

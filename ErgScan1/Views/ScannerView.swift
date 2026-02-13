@@ -27,6 +27,10 @@ struct ScannerView: View {
                     // Square positioning guide during ready and capturing
                     PositioningGuideView()
 
+                case .incompletePrompt:
+                    // No overlay for incomplete prompt state
+                    EmptyView()
+
                 case .locked:
                     // Green checkmark overlay when locked
                     LockedGuideOverlay()
@@ -47,6 +51,9 @@ struct ScannerView: View {
 
                 case .capturing:
                     capturingContent
+
+                case .incompletePrompt(let table, let firstScan):
+                    incompletePromptContent(table: table, isFirstScan: firstScan)
 
                 case .locked(let table):
                     EditableWorkoutForm(
@@ -239,6 +246,127 @@ struct ScannerView: View {
             }
             .padding()
         }
+    }
+
+    // MARK: - Incomplete Prompt Content
+
+    @ViewBuilder
+    private func incompletePromptContent(table: RecognizedTable, isFirstScan: Bool) -> some View {
+        VStack(spacing: 24) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.title2)
+                            .foregroundColor(.orange)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("More Data to Scan?")
+                                .font(.headline)
+                                .fontWeight(.bold)
+
+                            Text(getCompletenessMessage(table))
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color.orange.opacity(0.1))
+                    )
+
+                    Divider()
+
+                    Text("Current Data (\(table.rows.count) rows)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    // Show preview of captured data
+                    if let avg = table.averages {
+                        HStack {
+                            Text("Avg").frame(width: 60, alignment: .leading)
+                            Text(avg.time?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(avg.meters?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(avg.splitPer500m?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(avg.strokeRate?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
+                        .fontWeight(.semibold)
+                    }
+
+                    ForEach(Array(table.rows.prefix(5).enumerated()), id: \.offset) { idx, row in
+                        HStack {
+                            Text("#\(idx+1)").frame(width: 60, alignment: .leading)
+                            Text(row.time?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.meters?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.splitPer500m?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                            Text(row.strokeRate?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .font(.caption)
+                    }
+
+                    if table.rows.count > 5 {
+                        Text("... and \(table.rows.count - 5) more")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding()
+            }
+            .frame(maxHeight: 300)
+
+            Spacer()
+
+            VStack(spacing: 12) {
+                Text(isFirstScan ? "Scroll down on the monitor to show remaining splits, then scan again." : "Still missing data. Continue scrolling and scanning, or save what you have.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+
+                Button {
+                    Task {
+                        await viewModel.continueScanning()
+                    }
+                } label: {
+                    HStack {
+                        Image(systemName: "camera.fill")
+                        Text("Scan Next Screen")
+                    }
+                    .font(.headline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.accentColor)
+                    .foregroundColor(.white)
+                    .cornerRadius(12)
+                }
+
+                Button {
+                    viewModel.acceptIncompleteData()
+                } label: {
+                    HStack {
+                        Image(systemName: "checkmark")
+                        Text("Done Anyway")
+                    }
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(.systemGray6))
+                    .foregroundColor(.primary)
+                    .cornerRadius(12)
+                }
+            }
+            .padding()
+        }
+    }
+
+    private func getCompletenessMessage(_ table: RecognizedTable) -> String {
+        let check = table.checkDataCompleteness()
+        if let reason = check.reason {
+            return reason
+        }
+        return "Data may be incomplete. Scroll down on the monitor to see more splits."
     }
 }
 
