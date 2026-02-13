@@ -9,6 +9,7 @@ import AVFoundation
 enum ScanningState: Equatable {
     case ready          // Ready to start scanning
     case capturing      // Actively capturing and processing
+    case incompletePrompt(RecognizedTable, firstScan: Bool)  // Data meets locking criteria but is incomplete
     case locked(RecognizedTable)
     case saved
 
@@ -16,6 +17,8 @@ enum ScanningState: Equatable {
         switch (lhs, rhs) {
         case (.ready, .ready), (.capturing, .capturing), (.saved, .saved):
             return true
+        case (.incompletePrompt(let lTable, let lFirst), .incompletePrompt(let rTable, let rFirst)):
+            return lTable.stableHash == rTable.stableHash && lFirst == rFirst
         case (.locked(let lTable), .locked(let rTable)):
             return lTable.stableHash == rTable.stableHash
         default:
@@ -55,6 +58,7 @@ class ScannerViewModel: ObservableObject {
 
     private var hasTriggeredHaptic = false
     private var accumulatedTable: RecognizedTable?  // Accumulate best data across scans
+    private var previousScreenTable: RecognizedTable?  // Saved data from previous screen(s) for multi-screen merge
 
     // Benchmark tracking: save all captured images for ground truth dataset
     private var capturedImagesForBenchmark: [UIImage] = []
@@ -108,6 +112,7 @@ class ScannerViewModel: ObservableObject {
         captureCount = 0
         hasTriggeredHaptic = false
         accumulatedTable = nil  // Reset accumulated data for new scan
+        previousScreenTable = nil  // Reset multi-screen data
 
         print("🚀 Starting iterative scanning...")
 
@@ -212,13 +217,105 @@ class ScannerViewModel: ObservableObject {
     private func handleLocking(table: RecognizedTable) {
         guard !hasTriggeredHaptic else { return }
 
-        // Trigger haptic feedback
+        // If we have data from a previous screen, merge it in
+        var finalTable = table
+        if let prevScreen = previousScreenTable {
+            let mergedRows = mergeScreenRows(
+                firstScreen: prevScreen.rows,
+                secondScreen: table.rows,
+                category: table.category ?? prevScreen.category
+            )
+            finalTable = RecognizedTable(
+                workoutType: table.workoutType ?? prevScreen.workoutType,
+                category: table.category ?? prevScreen.category,
+                date: table.date ?? prevScreen.date,
+                totalTime: table.totalTime ?? prevScreen.totalTime,
+                description: table.description ?? prevScreen.description,
+                reps: table.reps ?? prevScreen.reps,
+                workPerRep: table.workPerRep ?? prevScreen.workPerRep,
+                restPerRep: table.restPerRep ?? prevScreen.restPerRep,
+                isVariableInterval: table.isVariableInterval ?? prevScreen.isVariableInterval,
+                totalDistance: table.totalDistance ?? prevScreen.totalDistance,
+                averages: mergeRow(existing: prevScreen.averages, new: table.averages),
+                rows: mergedRows,
+                averageConfidence: max(prevScreen.averageConfidence, table.averageConfidence)
+            )
+            print("📊 Merged with previous screen: \(prevScreen.rows.count) + \(table.rows.count) → \(mergedRows.count) rows")
+        }
+
+        // Check if data is complete
+        let completenessCheck = finalTable.checkDataCompleteness()
+        let isFirstScan = previousScreenTable == nil
+
+        if completenessCheck.isComplete {
+            // Data is complete — proceed to locked state
+            hapticService.triggerSuccess()
+            hasTriggeredHaptic = true
+            state = .locked(finalTable)
+            previousScreenTable = nil
+            print("✅ Workout locked with complete data! (\(finalTable.rows.count) rows)")
+        } else {
+            // Data meets locking criteria but is incomplete
+            state = .incompletePrompt(finalTable, firstScan: isFirstScan)
+            print("⚠️ Workout meets locking criteria but data appears incomplete")
+            if let reason = completenessCheck.reason {
+                print("   Reason: \(reason)")
+            }
+        }
+    }
+
+    // MARK: - Multi-Screen Scanning
+
+    func continueScanning() async {
+        guard case .incompletePrompt(let firstScreenTable, _) = state else { return }
+
+        // Save first screen data, then start a fresh scan for the second screen
+        previousScreenTable = firstScreenTable
+        accumulatedTable = nil
+        hasTriggeredHaptic = false
+        captureCount = 0
+        state = .capturing
+
+        print("🔄 Starting fresh scan for next screen...")
+        print("   Previous screen rows: \(firstScreenTable.rows.count)")
+
+        // Run a full scan cycle for the new screen
+        while state == .capturing {
+            captureCount += 1
+            print("📸 Next-screen capture attempt \(captureCount)")
+
+            await captureAndProcess()
+
+            if case .locked = state {
+                break
+            }
+            if case .incompletePrompt = state {
+                break
+            }
+
+            try? await Task.sleep(nanoseconds: 500_000_000)
+        }
+    }
+
+    func retryScan() {
+        guard case .incompletePrompt = state else { return }
+
+        // Restart the scanning process from scratch
+        print("🔄 User requested retry - restarting scan")
+        retake()
+    }
+
+    func acceptIncompleteData() {
+        guard case .incompletePrompt(let table, _) = state else { return }
+
+        // Proceed to locked state despite incomplete data
         hapticService.triggerSuccess()
         hasTriggeredHaptic = true
-
-        // Transition to locked state
         state = .locked(table)
-        print("✅ Workout locked!")
+        previousScreenTable = nil
+
+        print("⚠️ User accepted incomplete data")
+        print("   Rows: \(table.rows.count)")
     }
 
     // MARK: - Retake
@@ -228,6 +325,7 @@ class ScannerViewModel: ObservableObject {
         state = .ready
         currentTable = nil
         accumulatedTable = nil
+        previousScreenTable = nil
         completenessScore = 0.0
         fieldProgress = 0.0
         captureCount = 0
@@ -455,6 +553,7 @@ class ScannerViewModel: ObservableObject {
             reps: new.reps ?? existing.reps,
             workPerRep: new.workPerRep ?? existing.workPerRep,
             restPerRep: new.restPerRep ?? existing.restPerRep,
+            isVariableInterval: new.isVariableInterval ?? existing.isVariableInterval,
             totalDistance: new.totalDistance ?? existing.totalDistance,
             averages: mergeRow(existing: existing.averages, new: new.averages),
             rows: mergeRows(existing: existing.rows, new: new.rows),
@@ -491,6 +590,50 @@ class ScannerViewModel: ObservableObject {
         }
 
         return merged
+    }
+
+    // MARK: - Multi-Screen Merge (deduplication for combining different screens)
+
+    /// Merge rows from a second screen scan into the first screen's rows, deduplicating overlapping rows
+    private func mergeScreenRows(firstScreen: [TableRow], secondScreen: [TableRow], category: WorkoutCategory?) -> [TableRow] {
+        guard !firstScreen.isEmpty else { return secondScreen }
+        guard !secondScreen.isEmpty else { return firstScreen }
+
+        var result = firstScreen
+
+        for newRow in secondScreen {
+            let isDuplicate = result.contains { existingRow in
+                rowsMatch(existingRow, newRow, category: category)
+            }
+            if !isDuplicate {
+                result.append(newRow)
+            }
+        }
+
+        print("📊 Multi-screen merge: \(firstScreen.count) + \(secondScreen.count) → \(result.count) rows")
+        return result
+    }
+
+    private func rowsMatch(_ row1: TableRow, _ row2: TableRow, category: WorkoutCategory?) -> Bool {
+        switch category {
+        case .interval:
+            // Intervals: match on meters AND time AND rate
+            let metersMatch = row1.meters?.text == row2.meters?.text
+            let timeMatch = row1.time?.text == row2.time?.text
+            let rateMatch = row1.strokeRate?.text == row2.strokeRate?.text
+            return metersMatch && timeMatch && rateMatch
+        case .single:
+            // Single: match on meters or time
+            if let m1 = row1.meters?.text, let m2 = row2.meters?.text {
+                return m1 == m2
+            }
+            if let t1 = row1.time?.text, let t2 = row2.time?.text {
+                return t1 == t2
+            }
+            return false
+        case .none:
+            return false
+        }
     }
 
     /// Merge individual cell values, preferring non-nil and higher confidence

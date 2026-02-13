@@ -27,6 +27,7 @@ struct RecognizedTable {
     var reps: Int?                  // Interval count (nil for single)
     var workPerRep: String?         // "20:00" or "1000m" (nil for single)
     var restPerRep: String?         // "1:15" (nil for single)
+    var isVariableInterval: Bool?   // true for variable intervals, nil/false otherwise
     var totalDistance: Int?          // Total meters
     var averages: TableRow?         // Overall workout averages/summary row
     var rows: [TableRow]            // Interval results or split results
@@ -41,6 +42,7 @@ struct RecognizedTable {
         reps: Int? = nil,
         workPerRep: String? = nil,
         restPerRep: String? = nil,
+        isVariableInterval: Bool? = nil,
         totalDistance: Int? = nil,
         averages: TableRow? = nil,
         rows: [TableRow] = [],
@@ -54,6 +56,7 @@ struct RecognizedTable {
         self.reps = reps
         self.workPerRep = workPerRep
         self.restPerRep = restPerRep
+        self.isVariableInterval = isVariableInterval
         self.totalDistance = totalDistance
         self.averages = averages
         self.rows = rows
@@ -134,6 +137,97 @@ extension RecognizedTable {
         hasher.combine(rows.count)
 
         return hasher.finalize()
+    }
+
+    // MARK: - Data Completeness
+
+    struct CompletenessCheck {
+        let isComplete: Bool
+        let reason: String?
+        let expectedTotal: Int?
+        let actualTotal: Int?
+    }
+
+    func checkDataCompleteness() -> CompletenessCheck {
+        guard let category = category else {
+            return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
+        }
+
+        switch category {
+        case .interval:
+            return checkIntervalCompleteness()
+        case .single:
+            return checkSingleCompleteness()
+        }
+    }
+
+    private func checkIntervalCompleteness() -> CompletenessCheck {
+        // Sum all interval meters
+        let actualSum = rows.compactMap { row -> Int? in
+            guard let metersText = row.meters?.text else { return nil }
+            return Int(metersText)
+        }.reduce(0, +)
+
+        // Compare to averages row total
+        guard let expectedText = averages?.meters?.text, let expected = Int(expectedText) else {
+            return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
+        }
+
+        // Within 1% tolerance
+        let tolerance = Double(expected) * 0.01
+        let difference = abs(Double(actualSum) - Double(expected))
+        let isComplete = difference <= tolerance
+
+        let reason = isComplete ? nil : "Sum of intervals (\(actualSum)m) doesn't match total (\(expected)m)"
+        return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: actualSum)
+    }
+
+    private func checkSingleCompleteness() -> CompletenessCheck {
+        guard let lastRow = rows.last else {
+            return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
+        }
+
+        // Check distance-based completion
+        if let lastMeters = lastRow.meters?.text, let lastMetersInt = Int(lastMeters),
+           let expectedText = averages?.meters?.text, let expected = Int(expectedText) {
+            let tolerance = Double(expected) * 0.01
+            let difference = abs(Double(lastMetersInt) - Double(expected))
+            let isComplete = difference <= tolerance
+
+            let reason = isComplete ? nil : "Last split (\(lastMetersInt)m) doesn't reach total (\(expected)m)"
+            return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: lastMetersInt)
+        }
+
+        // Check time-based completion
+        if let lastTime = lastRow.time?.text,
+           let totalTime = totalTime {
+            let lastSeconds = approximateSeconds(lastTime)
+            let totalSeconds = approximateSeconds(totalTime)
+            let difference = abs(lastSeconds - totalSeconds)
+            let isComplete = difference <= 10.0
+
+            let reason = isComplete ? nil : "Last split time (\(lastTime)) doesn't reach total time (\(totalTime))"
+            return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: Int(totalSeconds), actualTotal: Int(lastSeconds))
+        }
+
+        return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
+    }
+
+    private func approximateSeconds(_ timeStr: String) -> Double {
+        let parts = timeStr.replacingOccurrences(of: ".", with: ":").split(separator: ":")
+        var seconds = 0.0
+        for (i, part) in parts.reversed().enumerated() {
+            if let val = Double(part) {
+                switch i {
+                case 0: seconds += val
+                case 1: seconds += val * 60
+                case 2: seconds += val * 3600
+                case 3: seconds += val * 3600
+                default: break
+                }
+            }
+        }
+        return seconds
     }
 }
 

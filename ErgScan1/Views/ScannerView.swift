@@ -13,31 +13,41 @@ struct ScannerView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // ---- TOP HALF: Camera preview with state-based overlays ----
-            ZStack {
-                if viewModel.cameraService.isSessionRunning {
-                    CameraPreviewView(previewLayer: viewModel.cameraService.previewLayer)
-                } else {
-                    Color.black
+            // ---- TOP HALF: Camera preview OR incomplete prompt table preview ----
+            if case .incompletePrompt(let table, _) = viewModel.state {
+                // Show table preview in top half for incomplete prompt
+                incompletePromptTablePreview(table: table)
+                    .frame(maxHeight: .infinity)
+            } else {
+                // Normal camera preview with overlays
+                ZStack {
+                    if viewModel.cameraService.isSessionRunning {
+                        CameraPreviewView(previewLayer: viewModel.cameraService.previewLayer)
+                    } else {
+                        Color.black
+                    }
+
+                    // State-based overlays
+                    switch viewModel.state {
+                    case .ready, .capturing:
+                        // Square positioning guide during ready and capturing
+                        PositioningGuideView()
+
+                    case .locked:
+                        // Green checkmark overlay when locked
+                        LockedGuideOverlay()
+
+                    case .saved:
+                        // No overlay for saved state
+                        EmptyView()
+
+                    default:
+                        EmptyView()
+                    }
                 }
-
-                // State-based overlays
-                switch viewModel.state {
-                case .ready, .capturing:
-                    // Square positioning guide during ready and capturing
-                    PositioningGuideView()
-
-                case .locked:
-                    // Green checkmark overlay when locked
-                    LockedGuideOverlay()
-
-                case .saved:
-                    // No overlay for saved state
-                    EmptyView()
-                }
+                .frame(maxHeight: .infinity)
+                .clipped()
             }
-            .frame(maxHeight: .infinity)
-            .clipped()
 
             // ---- BOTTOM HALF: State-based content ----
             VStack(spacing: 0) {
@@ -47,6 +57,9 @@ struct ScannerView: View {
 
                 case .capturing:
                     capturingContent
+
+                case .incompletePrompt(let table, let firstScan):
+                    incompletePromptButtons(table: table, isFirstScan: firstScan)
 
                 case .locked(let table):
                     EditableWorkoutForm(
@@ -239,6 +252,138 @@ struct ScannerView: View {
             }
             .padding()
         }
+    }
+
+    // MARK: - Incomplete Prompt Content
+
+    @ViewBuilder
+    private func incompletePromptTablePreview(table: RecognizedTable) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.title2)
+                        .foregroundColor(.orange)
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("More Data to Scan?")
+                            .font(.headline)
+                            .fontWeight(.bold)
+
+                        Text(getCompletenessMessage(table))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                .padding()
+                .background(
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(Color.orange.opacity(0.1))
+                )
+
+                Divider()
+
+                Text("Current Data (\(table.rows.count) rows)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
+                // Show preview of captured data
+                if let avg = table.averages {
+                    HStack {
+                        Text("Avg").frame(width: 60, alignment: .leading)
+                        Text(avg.time?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(avg.meters?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(avg.splitPer500m?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(avg.strokeRate?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                }
+
+                // Show all rows, not just first 5
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { idx, row in
+                    HStack {
+                        Text("#\(idx+1)").frame(width: 60, alignment: .leading)
+                        Text(row.time?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(row.meters?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(row.splitPer500m?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                        Text(row.strokeRate?.text ?? "-").frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .font(.caption)
+                }
+            }
+            .padding()
+        }
+        .background(Color(.systemBackground))
+    }
+
+    @ViewBuilder
+    private func incompletePromptButtons(table: RecognizedTable, isFirstScan: Bool) -> some View {
+        VStack(spacing: 12) {
+            Text(isFirstScan ? "Scroll down on the monitor to show remaining splits, then scan again." : "Still missing data. Continue scrolling and scanning, or save what you have.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+                .padding(.top)
+
+            Button {
+                Task {
+                    await viewModel.continueScanning()
+                }
+            } label: {
+                HStack {
+                    Image(systemName: "camera.fill")
+                    Text("Scan Next Screen")
+                }
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color.accentColor)
+                .foregroundColor(.white)
+                .cornerRadius(12)
+            }
+
+            Button {
+                viewModel.retryScan()
+            } label: {
+                HStack {
+                    Image(systemName: "arrow.clockwise")
+                    Text("Retry Scan")
+                }
+                .font(.subheadline)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(.systemGray6))
+                .foregroundColor(.primary)
+                .cornerRadius(12)
+            }
+
+            Button {
+                viewModel.acceptIncompleteData()
+            } label: {
+                HStack {
+                    Image(systemName: "checkmark.circle")
+                    Text("Accept Incomplete Data")
+                }
+                .font(.subheadline)
+                .frame(maxWidth: .infinity)
+                .padding()
+                .background(Color(.systemGray6))
+                .foregroundColor(.primary)
+                .cornerRadius(12)
+            }
+        }
+        .padding()
+        .background(Color(.systemBackground))
+    }
+
+    private func getCompletenessMessage(_ table: RecognizedTable) -> String {
+        let check = table.checkDataCompleteness()
+        if let reason = check.reason {
+            return reason
+        }
+        return "Data may be incomplete. Scroll down on the monitor to see more splits."
     }
 }
 
