@@ -196,36 +196,22 @@ class TableParserService {
         let dataStartIndex = anchorIndex + 5
         var dataRows: [TableRow] = []
         log("Parsing data rows starting from row \(dataStartIndex)...")
-        for i in dataStartIndex..<rows.count {
-            // Skip rest rows (variable intervals have rest rows interleaved)
-            // Rest rows start with "r" followed by a time, e.g., "r2:00  23"
-            let rowText = rows[i].normalizedText.trimmingCharacters(in: .whitespaces)
-            if rowText.hasPrefix("r") && rowText.count >= 4 {
-                // Check if it's "rN:NN" pattern (rest duration)
-                let afterR = String(rowText.dropFirst())
-                if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
-                    log("  Row \(i): skipped (rest row: '\(rows[i].joinedText)')")
-                    continue
-                }
-            }
 
-            // Also check individual fragments — the "r2:00" might be a single fragment
-            if let firstFragment = rows[i].fragments.first {
-                let text = firstFragment.text.trimmingCharacters(in: .whitespaces)
-                if text.hasPrefix("r") && text.count >= 4 {
-                    let afterR = String(text.dropFirst())
-                    if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
-                        log("  Row \(i): skipped (rest row fragment: '\(text)')")
-                        continue
-                    }
+        if table.isVariableInterval == true {
+            // Variable intervals: re-group fragments with tight Y-threshold
+            // The default Y-clustering often merges rest rows with adjacent data rows
+            // because they're very close together on the PM5 screen (~0.030 apart).
+            // Re-grouping with a tighter threshold (0.015) correctly separates them.
+            dataRows = parseVariableIntervalRows(allRows: rows, from: dataStartIndex, columnOrder: columnOrder)
+        } else {
+            // Standard processing for fixed intervals and single pieces
+            for i in dataStartIndex..<rows.count {
+                if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
+                    dataRows.append(row)
+                    log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
+                } else {
+                    log("  Row \(i): skipped (insufficient fields)")
                 }
-            }
-
-            if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
-                dataRows.append(row)
-                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
-            } else {
-                log("  Row \(i): skipped (insufficient fields)")
             }
         }
         table.rows = dataRows
@@ -236,18 +222,23 @@ class TableParserService {
         // Generate the workout name from the parsed interval meters.
         if table.isVariableInterval == true && !dataRows.isEmpty {
             log("\n--- VARIABLE INTERVAL NAMING ---")
-            let metersComponents = dataRows.compactMap { row -> String? in
-                guard let meters = row.meters?.text else { return nil }
-                return "\(meters)m"
+            let metersComponents = dataRows.enumerated().map { (index, row) -> String in
+                if let meters = row.meters?.text {
+                    return "\(meters)m"
+                } else {
+                    // Interval parsed but no meters - use time as identifier
+                    if let time = row.time?.text {
+                        return time.replacingOccurrences(of: ".0", with: "")
+                    } else {
+                        return "interval\(index + 1)"
+                    }
+                }
             }
-            if !metersComponents.isEmpty {
-                let generatedName = metersComponents.joined(separator: " / ")
-                table.workoutType = generatedName
-                table.description = generatedName
-                log("✓ Generated variable interval name: \"\(generatedName)\"")
-            } else {
-                log("⚠️ Could not generate variable interval name (no meters parsed)")
-            }
+            let generatedName = metersComponents.joined(separator: " / ")
+            table.workoutType = generatedName
+            table.description = generatedName
+            log("✓ Generated variable interval name: \"\(generatedName)\"")
+            log("  Intervals used: \(metersComponents.joined(separator: ", "))")
         }
 
         // Update reps count from data rows for variable intervals
@@ -699,5 +690,105 @@ class TableParserService {
         }
 
         return count > 0 ? sum / Double(count) : 0.0
+    }
+
+    // MARK: - Variable Interval Data Row Parsing
+
+    /// For variable intervals, re-group individual OCR fragments with tight Y-clustering
+    /// to correctly separate rest rows from data rows that the default grouping merges.
+    ///
+    /// The PM5 displays variable intervals with interleaved rest rows (~0.030 apart in Y),
+    /// which is too close for the default Y-clustering threshold. This method:
+    /// 1. Collects all fragments from the data area
+    /// 2. Sorts by Y and groups with 0.015 threshold
+    /// 3. Identifies rest groups (starting with r/г/tr/· + time pattern)
+    /// 4. Parses non-rest groups as data rows
+    private func parseVariableIntervalRows(
+        allRows: [RowData],
+        from startIndex: Int,
+        columnOrder: [Column]
+    ) -> [TableRow] {
+        var dataRows: [TableRow] = []
+
+        // Collect ALL individual fragments from the data area
+        var fragments: [GuideRelativeOCRResult] = []
+        for i in startIndex..<allRows.count {
+            fragments.append(contentsOf: allRows[i].fragments)
+        }
+
+        log("  Variable interval mode: collected \(fragments.count) fragments from data area")
+
+        // Sort by Y position
+        fragments.sort { $0.guideRelativeBox.midY < $1.guideRelativeBox.midY }
+
+        // Group by Y with tight threshold (0.015) to separate rest rows from data rows
+        // Within a PM5 row, fragments are within ~0.003 of each other
+        // Between adjacent rows (data↔rest), the gap is ~0.030
+        // So 0.015 correctly separates them
+        var groups: [[GuideRelativeOCRResult]] = []
+        var currentGroup: [GuideRelativeOCRResult] = []
+        var groupStartY: CGFloat = -1
+
+        for fragment in fragments {
+            let y = fragment.guideRelativeBox.midY
+            if currentGroup.isEmpty {
+                currentGroup.append(fragment)
+                groupStartY = y
+            } else if abs(y - groupStartY) < 0.015 {
+                currentGroup.append(fragment)
+            } else {
+                groups.append(currentGroup)
+                currentGroup = [fragment]
+                groupStartY = y
+            }
+        }
+        if !currentGroup.isEmpty {
+            groups.append(currentGroup)
+        }
+
+        log("  Re-grouped into \(groups.count) tight rows")
+
+        // Parse each group
+        for (idx, group) in groups.enumerated() {
+            // Sort group fragments left-to-right for proper column assignment
+            let sortedGroup = group.sorted { $0.guideRelativeBox.midX < $1.guideRelativeBox.midX }
+
+            // Check if this group is a rest row by examining the leftmost fragment
+            let firstText = matcher.normalize(sortedGroup[0].text.trimmingCharacters(in: .whitespaces))
+            if isRestTimeFragment(firstText) {
+                log("  Group \(idx): skipped (rest row, first fragment: '\(sortedGroup[0].text)')")
+                continue
+            }
+
+            // Build a temporary RowData and parse
+            let joined = sortedGroup.map { $0.text }.joined(separator: " ")
+            let normalized = matcher.normalize(joined)
+            let tempRow = RowData(index: idx, joinedText: joined, normalizedText: normalized, fragments: sortedGroup)
+
+            if let row = parseDataRow(tempRow, columnOrder: columnOrder) {
+                dataRows.append(row)
+                log("✓ Group \(idx): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
+            } else {
+                log("  Group \(idx): skipped (insufficient fields) - '\(joined)'")
+            }
+        }
+
+        return dataRows
+    }
+
+    /// Check if a normalized text fragment is a rest time indicator.
+    /// Rest rows on the PM5 start with "r" + time, but OCR often reads the "r" as:
+    /// г (Cyrillic), · (middle dot), or adds "t" prefix (tr2:00).
+    private func isRestTimeFragment(_ text: String) -> Bool {
+        let prefixes = ["r", "г", "tr", "·"]
+        for prefix in prefixes {
+            if text.hasPrefix(prefix) && text.count >= prefix.count + 4 {
+                let afterPrefix = String(text.dropFirst(prefix.count))
+                if matcher.matchTime(afterPrefix) || matcher.matches(afterPrefix, pattern: #"^\d{1,2}:\d{2}"#) {
+                    return true
+                }
+            }
+        }
+        return false
     }
 }
