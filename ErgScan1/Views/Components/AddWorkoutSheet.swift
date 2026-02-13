@@ -68,53 +68,53 @@ struct AddWorkoutSheet: View {
                                 .fontWeight(.medium)
                         }
 
-                        // Upload button
-                        VStack(spacing: 12) {
-                            Button {
-                                HapticService.shared.lightImpact()
-                                dismissSheet()
-                                onUpload()
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.green)
-                                        .frame(width: 80, height: 80)
-                                        .shadow(color: .green.opacity(0.3), radius: 8, y: 4)
+                        // // Upload button
+                        // VStack(spacing: 12) {
+                        //     Button {
+                        //         HapticService.shared.lightImpact()
+                        //         dismissSheet()
+                        //         onUpload()
+                        //     } label: {
+                        //         ZStack {
+                        //             Circle()
+                        //                 .fill(Color.green)
+                        //                 .frame(width: 80, height: 80)
+                        //                 .shadow(color: .green.opacity(0.3), radius: 8, y: 4)
 
-                                    Image(systemName: "arrow.up.circle.fill")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                }
-                            }
+                        //             Image(systemName: "arrow.up.circle.fill")
+                        //                 .font(.system(size: 32))
+                        //                 .foregroundColor(.white)
+                        //         }
+                        //     }
 
-                            Text("Upload")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
+                        //     Text("Upload")
+                        //         .font(.subheadline)
+                        //         .fontWeight(.medium)
+                        // }
 
-                        // Goals button
-                        VStack(spacing: 12) {
-                            Button {
-                                HapticService.shared.lightImpact()
-                                dismissSheet()
-                                onGoals()
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(Color.orange)
-                                        .frame(width: 80, height: 80)
-                                        .shadow(color: .orange.opacity(0.3), radius: 8, y: 4)
+                        // // Goals button
+                        // VStack(spacing: 12) {
+                        //     Button {
+                        //         HapticService.shared.lightImpact()
+                        //         dismissSheet()
+                        //         onGoals()
+                        //     } label: {
+                        //         ZStack {
+                        //             Circle()
+                        //                 .fill(Color.orange)
+                        //                 .frame(width: 80, height: 80)
+                        //                 .shadow(color: .orange.opacity(0.3), radius: 8, y: 4)
 
-                                    Image(systemName: "target")
-                                        .font(.system(size: 32))
-                                        .foregroundColor(.white)
-                                }
-                            }
+                        //             Image(systemName: "target")
+                        //                 .font(.system(size: 32))
+                        //                 .foregroundColor(.white)
+                        //         }
+                        //     }
 
-                            Text("Goals")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
+                        //     Text("Goals")
+                        //         .font(.subheadline)
+                        //         .fontWeight(.medium)
+                        // }
                     }
                     .padding(.vertical, 20)
 

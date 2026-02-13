@@ -40,8 +40,9 @@ class SocialService: ObservableObject {
         let record: CKRecord
     }
 
-    struct SharedWorkoutResult: Identifiable {
+    struct SharedWorkoutResult: Identifiable, Hashable {
         let id: String
+        let ownerID: String
         let ownerUsername: String
         let ownerDisplayName: String
         let workoutDate: Date
@@ -71,6 +72,8 @@ class SocialService: ObservableObject {
         Task {
             await checkCloudKitStatus()
             await loadMyProfile()
+            // Publish any existing workouts that haven't been shared yet
+            await publishExistingWorkouts()
         }
     }
 
@@ -217,6 +220,9 @@ class SocialService: ObservableObject {
         }
 
         print("🎉 saveUsername completed successfully!")
+
+        // Publish all existing workouts now that we have a username
+        await publishExistingWorkouts()
     }
 
     func checkUsernameAvailability(_ username: String) async {
@@ -589,15 +595,90 @@ class SocialService: ObservableObject {
         }
     }
 
+    func deleteSharedWorkout(localWorkoutID: String) async {
+        guard let userID = currentUserID else {
+            print("⚠️ deleteSharedWorkout: no currentUserID")
+            return
+        }
+        do {
+            let predicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
+            let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+            if results.isEmpty {
+                print("ℹ️ deleteSharedWorkout: no SharedWorkout found for localWorkoutID=\(localWorkoutID)")
+            }
+            for (recordID, result) in results {
+                guard case .success(_) = result else { continue }
+                try await publicDB.deleteRecord(withID: recordID)
+                print("✅ Deleted SharedWorkout record: \(recordID.recordName)")
+            }
+        } catch let error as CKError where error.code == .unknownItem {
+            // SharedWorkout type doesn't exist yet — nothing to delete
+        } catch {
+            print("⚠️ Failed to delete SharedWorkout (localWorkoutID=\(localWorkoutID)): \(error)")
+        }
+    }
+
+    /// Resolves the CloudKit SharedWorkout record ID for a local workout UUID.
+    /// Used to bridge local Workout → CloudKit record ID for chup/comment operations.
+    func resolveSharedWorkoutRecordID(localWorkoutID: String) async -> String? {
+        guard let userID = currentUserID else { return nil }
+        do {
+            let predicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
+            let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+            if let (recordID, result) = results.first, case .success(_) = result {
+                return recordID.recordName
+            }
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    /// Publishes all existing local workouts that haven't been shared yet.
+    /// Called on startup and after username setup to ensure friends can see all workouts.
+    func publishExistingWorkouts() async {
+        guard let userID = currentUserID,
+              let context = modelContext,
+              myProfile != nil else { return }
+
+        let username = myProfile?["username"] as? String ?? ""
+        guard !username.isEmpty else { return }
+
+        let targetUserID = userID
+        do {
+            let descriptor = FetchDescriptor<Workout>(
+                predicate: #Predicate<Workout> { workout in
+                    workout.userID == targetUserID
+                }
+            )
+            let workouts = try context.fetch(descriptor)
+            guard !workouts.isEmpty else { return }
+            print("📤 Publishing \(workouts.count) existing workouts...")
+
+            for workout in workouts {
+                await publishWorkout(
+                    workoutType: workout.workoutType,
+                    date: workout.date,
+                    totalTime: workout.totalTime,
+                    totalDistance: workout.totalDistance ?? 0,
+                    averageSplit: workout.averageSplit ?? "",
+                    intensityZone: workout.intensityZone ?? "",
+                    isErgTest: workout.isErgTest,
+                    localWorkoutID: workout.id.uuidString
+                )
+            }
+            print("✅ Finished publishing existing workouts")
+        } catch {
+            print("⚠️ Failed to publish existing workouts: \(error)")
+        }
+    }
+
     func loadFriendActivity() async {
         // Ensure friends are loaded
         if friends.isEmpty {
             await loadFriends()
-        }
-
-        guard !friends.isEmpty else {
-            friendActivity = []
-            return
         }
 
         isLoading = true
@@ -605,6 +686,18 @@ class SocialService: ObservableObject {
 
         do {
             var allWorkouts: [SharedWorkoutResult] = []
+
+            // Include current user's own shared workouts
+            if let userID = currentUserID {
+                let ownPredicate = NSPredicate(format: "ownerID == %@", userID)
+                let ownQuery = CKQuery(recordType: "SharedWorkout", predicate: ownPredicate)
+                ownQuery.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
+                let (ownResults, _) = try await publicDB.records(matching: ownQuery, resultsLimit: 10)
+                for (recordID, result) in ownResults {
+                    guard case .success(let record) = result else { continue }
+                    allWorkouts.append(sharedWorkoutResult(from: record, recordID: recordID, fallbackID: userID, fallbackUsername: myProfile?["username"] as? String ?? "", fallbackDisplayName: myProfile?["displayName"] as? String ?? ""))
+                }
+            }
 
             // Query last 3 workouts per friend
             for friend in friends {
@@ -615,18 +708,7 @@ class SocialService: ObservableObject {
 
                 for (recordID, result) in results {
                     guard case .success(let record) = result else { continue }
-                    allWorkouts.append(SharedWorkoutResult(
-                        id: recordID.recordName,
-                        ownerUsername: record["ownerUsername"] as? String ?? friend.username,
-                        ownerDisplayName: record["ownerDisplayName"] as? String ?? friend.displayName,
-                        workoutDate: record["workoutDate"] as? Date ?? Date(),
-                        workoutType: record["workoutType"] as? String ?? "",
-                        totalTime: record["totalTime"] as? String ?? "",
-                        totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
-                        averageSplit: record["averageSplit"] as? String ?? "",
-                        intensityZone: record["intensityZone"] as? String ?? "",
-                        isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1
-                    ))
+                    allWorkouts.append(sharedWorkoutResult(from: record, recordID: recordID, fallbackID: friend.id, fallbackUsername: friend.username, fallbackDisplayName: friend.displayName))
                 }
             }
 
@@ -638,6 +720,289 @@ class SocialService: ObservableObject {
         } catch {
             print("⚠️ Failed to load friend activity: \(error)")
             errorMessage = "Could not load activity feed."
+        }
+    }
+
+    private func sharedWorkoutResult(from record: CKRecord, recordID: CKRecord.ID, fallbackID: String, fallbackUsername: String, fallbackDisplayName: String) -> SharedWorkoutResult {
+        SharedWorkoutResult(
+            id: recordID.recordName,
+            ownerID: record["ownerID"] as? String ?? fallbackID,
+            ownerUsername: record["ownerUsername"] as? String ?? fallbackUsername,
+            ownerDisplayName: record["ownerDisplayName"] as? String ?? fallbackDisplayName,
+            workoutDate: record["workoutDate"] as? Date ?? Date(),
+            workoutType: record["workoutType"] as? String ?? "",
+            totalTime: record["totalTime"] as? String ?? "",
+            totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
+            averageSplit: record["averageSplit"] as? String ?? "",
+            intensityZone: record["intensityZone"] as? String ?? "",
+            isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1
+        )
+    }
+
+    // MARK: - Chups
+
+    func toggleChup(workoutID: String, userID: String, username: String) async throws -> Bool {
+        // Check if user already chupped
+        do {
+            let predicate = NSPredicate(format: "workoutID == %@ AND userID == %@", workoutID, userID)
+            let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+
+            if let (recordID, result) = results.first, case .success(_) = result {
+                // Already chupped — remove it
+                try await publicDB.deleteRecord(withID: recordID)
+                return false
+            }
+        } catch let error as CKError where error.code == .unknownItem {
+            // Record type doesn't exist yet — will be created on first save
+        }
+
+        // Not chupped yet — create chup
+        do {
+            let record = CKRecord(recordType: "WorkoutChup")
+            record["workoutID"] = workoutID
+            record["userID"] = userID
+            record["username"] = username
+            record["timestamp"] = Date() as NSDate
+            _ = try await publicDB.save(record)
+            return true
+        } catch let error as CKError where error.code == .permissionFailure {
+            print("⚠️ Chup permission failure — record type may not exist in CloudKit schema. Run from Xcode first to auto-create, then deploy schema to Production.")
+            errorMessage = "Chups not available yet. Please run the app from Xcode to initialize CloudKit schema."
+            throw error
+        }
+    }
+
+    func fetchChups(for workoutID: String) async -> ChupInfo {
+        guard let userID = currentUserID else {
+            return ChupInfo(count: 0, currentUserChupped: false)
+        }
+        do {
+            let predicate = NSPredicate(format: "workoutID == %@", workoutID)
+            let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
+
+            var count = 0
+            var currentUserChupped = false
+            for (_, result) in results {
+                guard case .success(let record) = result else { continue }
+                count += 1
+                if let chupUserID = record["userID"] as? String, chupUserID == userID {
+                    currentUserChupped = true
+                }
+            }
+            return ChupInfo(count: count, currentUserChupped: currentUserChupped)
+        } catch {
+            return ChupInfo(count: 0, currentUserChupped: false)
+        }
+    }
+
+    func fetchChupUsers(for workoutID: String) async -> [String] {
+        do {
+            let predicate = NSPredicate(format: "workoutID == %@", workoutID)
+            let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
+
+            return results.compactMap { _, result in
+                guard case .success(let record) = result else { return nil }
+                return record["username"] as? String
+            }
+        } catch {
+            return []
+        }
+    }
+
+    // MARK: - Comments
+
+    func postComment(workoutID: String, userID: String, username: String, text: String) async throws -> CommentInfo {
+        let record = CKRecord(recordType: "WorkoutComment")
+        record["workoutID"] = workoutID
+        record["userID"] = userID
+        record["username"] = username
+        record["text"] = text
+        record["timestamp"] = Date() as NSDate
+        record["hearts"] = 0 as NSNumber
+
+        do {
+            let saved = try await publicDB.save(record)
+            return CommentInfo(
+                id: saved.recordID.recordName,
+                userID: userID,
+                username: username,
+                text: text,
+                timestamp: Date(),
+                heartCount: 0,
+                currentUserHearted: false
+            )
+        } catch let error as CKError where error.code == .permissionFailure {
+            print("⚠️ Comment permission failure — record type may not exist in CloudKit schema. Run from Xcode first to auto-create, then deploy schema to Production.")
+            errorMessage = "Comments not available yet. Please run the app from Xcode to initialize CloudKit schema."
+            throw error
+        }
+    }
+
+    func fetchComments(for workoutID: String) async -> [CommentInfo] {
+        guard let userID = currentUserID else { return [] }
+        do {
+            let predicate = NSPredicate(format: "workoutID == %@", workoutID)
+            let query = CKQuery(recordType: "WorkoutComment", predicate: predicate)
+            query.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
+
+            var comments: [CommentInfo] = []
+            for (recordID, result) in results {
+                guard case .success(let record) = result else { continue }
+                let commentID = recordID.recordName
+
+                // Check if current user hearted this comment
+                var hearted = false
+                do {
+                    let heartPred = NSPredicate(format: "commentID == %@ AND userID == %@", commentID, userID)
+                    let heartQuery = CKQuery(recordType: "CommentHeart", predicate: heartPred)
+                    let (heartResults, _) = try await publicDB.records(matching: heartQuery, resultsLimit: 1)
+                    hearted = !heartResults.isEmpty
+                } catch {
+                    // Ignore heart fetch errors
+                }
+
+                comments.append(CommentInfo(
+                    id: commentID,
+                    userID: record["userID"] as? String ?? "",
+                    username: record["username"] as? String ?? "",
+                    text: record["text"] as? String ?? "",
+                    timestamp: record["timestamp"] as? Date ?? Date(),
+                    heartCount: (record["hearts"] as? NSNumber)?.intValue ?? 0,
+                    currentUserHearted: hearted
+                ))
+            }
+            return comments
+        } catch {
+            return []
+        }
+    }
+
+    func toggleCommentHeart(commentID: String, userID: String) async throws -> Bool {
+        // Check if user already hearted
+        do {
+            let predicate = NSPredicate(format: "commentID == %@ AND userID == %@", commentID, userID)
+            let query = CKQuery(recordType: "CommentHeart", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+
+            if let (recordID, result) = results.first, case .success(_) = result {
+                // Already hearted — remove it
+                try await publicDB.deleteRecord(withID: recordID)
+                return false
+            }
+        } catch let error as CKError where error.code == .unknownItem {
+            // Record type doesn't exist yet
+        }
+
+        // Not hearted — create heart
+        let record = CKRecord(recordType: "CommentHeart")
+        record["commentID"] = commentID
+        record["userID"] = userID
+        _ = try await publicDB.save(record)
+        return true
+    }
+
+    // MARK: - Friendship Checks
+
+    func checkFriendship(currentUserID: String, otherUserID: String) async -> Bool {
+        do {
+            // Check if there's an accepted request in either direction
+            let pred1 = NSPredicate(format: "senderID == %@ AND receiverID == %@ AND status == %@", currentUserID, otherUserID, "accepted")
+            let q1 = CKQuery(recordType: "FriendRequest", predicate: pred1)
+            let (r1, _) = try await publicDB.records(matching: q1, resultsLimit: 1)
+            if !r1.isEmpty { return true }
+
+            let pred2 = NSPredicate(format: "senderID == %@ AND receiverID == %@ AND status == %@", otherUserID, currentUserID, "accepted")
+            let q2 = CKQuery(recordType: "FriendRequest", predicate: pred2)
+            let (r2, _) = try await publicDB.records(matching: q2, resultsLimit: 1)
+            return !r2.isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    func hasPendingRequest(from senderID: String, to receiverID: String) async -> Bool {
+        do {
+            let predicate = NSPredicate(format: "senderID == %@ AND receiverID == %@ AND status == %@", senderID, receiverID, "pending")
+            let query = CKQuery(recordType: "FriendRequest", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+            return !results.isEmpty
+        } catch {
+            return false
+        }
+    }
+
+    // MARK: - Friend Profile Data
+
+    func fetchSharedWorkouts(for userID: String) async -> [SharedWorkoutResult] {
+        do {
+            let predicate = NSPredicate(format: "ownerID == %@", userID)
+            let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
+            query.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 50)
+
+            return results.compactMap { recordID, result in
+                guard case .success(let record) = result else { return nil }
+                return SharedWorkoutResult(
+                    id: recordID.recordName,
+                    ownerID: record["ownerID"] as? String ?? userID,
+                    ownerUsername: record["ownerUsername"] as? String ?? "",
+                    ownerDisplayName: record["ownerDisplayName"] as? String ?? "",
+                    workoutDate: record["workoutDate"] as? Date ?? Date(),
+                    workoutType: record["workoutType"] as? String ?? "",
+                    totalTime: record["totalTime"] as? String ?? "",
+                    totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
+                    averageSplit: record["averageSplit"] as? String ?? "",
+                    intensityZone: record["intensityZone"] as? String ?? "",
+                    isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1
+                )
+            }
+        } catch {
+            return []
+        }
+    }
+
+    func fetchFriendCount(for userID: String) async -> Int {
+        do {
+            let pred1 = NSPredicate(format: "senderID == %@ AND status == %@", userID, "accepted")
+            let q1 = CKQuery(recordType: "FriendRequest", predicate: pred1)
+            let (r1, _) = try await publicDB.records(matching: q1, resultsLimit: 200)
+
+            let pred2 = NSPredicate(format: "receiverID == %@ AND status == %@", userID, "accepted")
+            let q2 = CKQuery(recordType: "FriendRequest", predicate: pred2)
+            let (r2, _) = try await publicDB.records(matching: q2, resultsLimit: 200)
+
+            // Collect unique friend IDs
+            var friendIDs = Set<String>()
+            for (_, result) in r1 {
+                guard case .success(let record) = result else { continue }
+                if let receiverID = record["receiverID"] as? String { friendIDs.insert(receiverID) }
+            }
+            for (_, result) in r2 {
+                guard case .success(let record) = result else { continue }
+                if let senderID = record["senderID"] as? String { friendIDs.insert(senderID) }
+            }
+            return friendIDs.count
+        } catch {
+            return 0
+        }
+    }
+
+    func fetchUserProfile(for userID: String) async -> UserProfileResult? {
+        do {
+            let recordID = CKRecord.ID(recordName: userID)
+            let record = try await publicDB.record(for: recordID)
+            return UserProfileResult(
+                id: record["appleUserID"] as? String ?? userID,
+                username: record["username"] as? String ?? "",
+                displayName: record["displayName"] as? String ?? "",
+                recordID: recordID
+            )
+        } catch {
+            return nil
         }
     }
 

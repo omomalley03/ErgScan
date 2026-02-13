@@ -133,16 +133,21 @@ class TableParserService {
         let metadataIndex = anchorIndex + 2
         if metadataIndex < rows.count {
             log("Examining row \(metadataIndex) for metadata...")
-            let (date, totalTime) = extractDateAndTime(from: rows[metadataIndex])
-            table.date = date
+            let (ocrDate, totalTime) = extractDateAndTime(from: rows[metadataIndex])
+
+            // Always default to today's date (monitor often has wrong date)
+            table.date = Date()
             table.totalTime = totalTime
-            if let d = date {
+
+            if let d = ocrDate {
                 let formatter = DateFormatter()
                 formatter.dateStyle = .medium
-                log("✓ Date found: \(formatter.string(from: d))")
+                log("✓ OCR date found: \(formatter.string(from: d)) (ignored, using today instead)")
             } else {
-                log("⚠️ No date found")
+                log("⚠️ No OCR date found (using today)")
             }
+            log("✓ Using today's date: \(DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none))")
+
             if let tt = totalTime {
                 log("✓ Total time found: \(tt)")
             } else {
@@ -150,6 +155,9 @@ class TableParserService {
             }
         } else {
             log("⚠️ Metadata row \(metadataIndex) is out of bounds")
+            // Even if metadata row is out of bounds, set today's date
+            table.date = Date()
+            log("✓ Using today's date: \(DateFormatter.localizedString(from: Date(), dateStyle: .medium, timeStyle: .none))")
         }
 
         // Phase 5: Determine column order from header row

@@ -6,6 +6,7 @@ struct WorkoutListView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var socialService: SocialService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
 
     // Filter workouts by current user
@@ -14,23 +15,38 @@ struct WorkoutListView: View {
         return allWorkouts.filter { $0.userID == currentUser.appleUserID }
     }
 
+    private var myUserID: String {
+        currentUser?.appleUserID ?? ""
+    }
+
     var body: some View {
         NavigationStack {
             if workouts.isEmpty {
                 emptyState
             } else {
-                List {
-                    ForEach(workouts) { workout in
-                        NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
-                            WorkoutRow(workout: workout)
+                ScrollView {
+                    LazyVStack(spacing: 12) {
+                        ForEach(workouts) { workout in
+                            NavigationLink(destination: UnifiedWorkoutDetailView(
+                                localWorkout: workout,
+                                currentUserID: myUserID
+                            )) {
+                                LogWorkoutCard(workout: workout)
+                            }
+                            .buttonStyle(.plain)
+                            .contextMenu {
+                                Button(role: .destructive) {
+                                    deleteWorkout(workout)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
                         }
                     }
-                    .onDelete(perform: deleteWorkouts)
+                    .padding(.horizontal)
+                    .padding(.bottom, 100)
                 }
                 .navigationTitle("Workouts")
-                .toolbar {
-                    EditButton()
-                }
             }
         }
     }
@@ -59,66 +75,9 @@ struct WorkoutListView: View {
 
     // MARK: - Actions
 
-    private func deleteWorkouts(at offsets: IndexSet) {
-        for index in offsets {
-            modelContext.delete(workouts[index])
-        }
+    private func deleteWorkout(_ workout: Workout) {
+        let workoutIDString = workout.id.uuidString
+        Task { await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) }
+        modelContext.delete(workout)
     }
-}
-
-// MARK: - Workout Row
-
-struct WorkoutRow: View {
-
-    let workout: Workout
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                // Workout type
-                Text(workout.workoutType)
-                    .font(.headline)
-
-                // Zone badge
-                if let zone = workout.zone {
-                    Text(zone.displayName)
-                        .font(.caption2)
-                        .fontWeight(.bold)
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(zone.color))
-                }
-
-                // Erg test flag
-                if workout.isErgTest {
-                    Image(systemName: "flag.checkered")
-                        .font(.subheadline)
-                        .foregroundColor(.primary)
-                }
-
-                Spacer()
-
-                // Average split (right side)
-                if let split = workout.averageSplit, !split.isEmpty {
-                    Text(split)
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .monospacedDigit()
-                }
-            }
-
-            // Date only
-            Text(workout.date, style: .date)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-        }
-        .padding(.vertical, 4)
-    }
-
-}
-
-#Preview {
-    WorkoutListView()
-        .modelContainer(for: [Workout.self, Interval.self])
 }

@@ -1,69 +1,177 @@
 import SwiftUI
+import CloudKit
 
-struct EnhancedWorkoutDetailView: View {
-    let workout: Workout
+struct UnifiedWorkoutDetailView: View {
+    let workout: any WorkoutDisplayable
+    let localWorkout: Workout?
+    let isOwnWorkout: Bool
+    let currentUserID: String
+
+    @EnvironmentObject var socialService: SocialService
+
+    // UI state
     @State private var currentIntervalIndex = 0
     @State private var showSwipeHint = true
     @State private var showImageViewer = false
     @State private var showEditSheet = false
 
-    var sortedIntervals: [Interval] {
-        (workout.intervals ?? [])
+    // Social state
+    @State private var resolvedWorkoutRecordID: String?
+    @State private var chupInfo = ChupInfo(count: 0, currentUserChupped: false)
+    @State private var comments: [CommentInfo] = []
+    @State private var isChupAnimating = false
+    @State private var isBigChup = false
+    @State private var newCommentText = ""
+
+    // Convenience init for own workout (from Log)
+    init(localWorkout: Workout, currentUserID: String) {
+        self.workout = localWorkout
+        self.localWorkout = localWorkout
+        self.isOwnWorkout = true
+        self.currentUserID = currentUserID
+    }
+
+    // Convenience init for shared workout (from Dashboard / FriendProfile)
+    init(sharedWorkout: SocialService.SharedWorkoutResult, currentUserID: String) {
+        self.workout = sharedWorkout
+        self.localWorkout = nil
+        self.isOwnWorkout = sharedWorkout.ownerID == currentUserID
+        self.currentUserID = currentUserID
+    }
+
+    // MARK: - Computed
+
+    private var sortedIntervals: [Interval] {
+        (localWorkout?.intervals ?? [])
             .filter { $0.orderIndex >= 1 }
             .sorted(by: { $0.orderIndex < $1.orderIndex })
     }
 
-    var averagesInterval: Interval? {
-        (workout.intervals ?? []).first(where: { $0.orderIndex == 0 })
+    private var averagesInterval: Interval? {
+        (localWorkout?.intervals ?? []).first(where: { $0.orderIndex == 0 })
     }
 
+    private var effectiveWorkoutRecordID: String? {
+        if localWorkout != nil {
+            return resolvedWorkoutRecordID
+        } else {
+            return workout.workoutRecordID
+        }
+    }
+
+    // MARK: - Body
+
     var body: some View {
-        content
-            .navigationTitle(workout.workoutType)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
+        ScrollView {
+            VStack(spacing: 20) {
+                // 1. Friend identity header
+                if !isOwnWorkout {
+                    friendIdentityHeader
+                }
+
+                // 2. Erg image (own workout only)
+                savedImageView
+
+                // 3. Summary card
+                summarySection
+
+                // 4. Chup + comment bar
+                if effectiveWorkoutRecordID != nil {
+                    socialBar
+                }
+
+                // 5. Splits / Intervals (own workout only)
+                intervalsContent
+
+                // 6. Inline comments section
+                if effectiveWorkoutRecordID != nil {
+                    commentsSection
+                }
+            }
+            .padding()
+        }
+        .overlay {
+            BigChupOverlay(isShowing: $isBigChup)
+        }
+        .navigationTitle(workout.displayWorkoutType)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                if isOwnWorkout && localWorkout != nil {
                     Button("Edit") {
                         showEditSheet = true
                     }
                 }
             }
-            .sheet(isPresented: $showImageViewer) {
-                imageViewerSheet
-            }
-            .sheet(isPresented: $showEditSheet) {
+        }
+        .sheet(isPresented: $showImageViewer) {
+            imageViewerSheet
+        }
+        .sheet(isPresented: $showEditSheet) {
+            if let lw = localWorkout {
                 NavigationStack {
-                    EditWorkoutView(workout: workout)
+                    EditWorkoutView(workout: lw)
                 }
             }
-            .onAppear {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
-                    withAnimation {
-                        showSwipeHint = false
-                    }
-                }
+        }
+        .task {
+            // Resolve CloudKit record ID for own workouts
+            if let lw = localWorkout {
+                resolvedWorkoutRecordID = await socialService.resolveSharedWorkoutRecordID(
+                    localWorkoutID: lw.id.uuidString
+                )
             }
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        ScrollView {
-            VStack(spacing: 20) {
-                savedImageView
-
-                if let averages = averagesInterval {
-                    AveragesSummaryCard(interval: averages, category: workout.category, date: workout.date, intensityZone: workout.zone)
-                }
-
-                intervalsContent
+            // Load social data
+            if let wid = effectiveWorkoutRecordID {
+                chupInfo = await socialService.fetchChups(for: wid)
+                comments = await socialService.fetchComments(for: wid)
             }
-            .padding()
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
+                withAnimation { showSwipeHint = false }
+            }
         }
     }
 
+    // MARK: - Friend Identity Header
+
+    private var friendIdentityHeader: some View {
+        NavigationLink(destination: FriendProfileView(
+            userID: workout.ownerUserID,
+            username: workout.displayUsername,
+            displayName: workout.displayName
+        )) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(Color.blue.opacity(0.2))
+                    .frame(width: 48, height: 48)
+                    .overlay(
+                        Image(systemName: "person.fill")
+                            .font(.body)
+                            .foregroundColor(.blue)
+                    )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(workout.displayName.isEmpty ? "@\(workout.displayUsername)" : workout.displayName)
+                        .font(.headline)
+                        .fontWeight(.semibold)
+                        .foregroundColor(.primary)
+                    Text("@\(workout.displayUsername) \u{00B7} \(workout.displayDate, style: .date)")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Image
+
     @ViewBuilder
     private var savedImageView: some View {
-        if let imageData = workout.imageData,
+        if let imageData = localWorkout?.imageData,
            let uiImage = UIImage(data: imageData) {
             Image(uiImage: uiImage)
                 .resizable()
@@ -74,9 +182,7 @@ struct EnhancedWorkoutDetailView: View {
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
                 )
-                .onTapGesture {
-                    showImageViewer = true
-                }
+                .onTapGesture { showImageViewer = true }
                 .overlay(alignment: .topTrailing) {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .font(.caption)
@@ -89,19 +195,157 @@ struct EnhancedWorkoutDetailView: View {
         }
     }
 
+    // MARK: - Summary
+
+    @ViewBuilder
+    private var summarySection: some View {
+        if let averages = averagesInterval, let lw = localWorkout {
+            AveragesSummaryCard(interval: averages, category: lw.category, date: lw.date, intensityZone: lw.zone)
+        } else {
+            // Generic summary from WorkoutDisplayable
+            displayableSummaryCard
+        }
+    }
+
+    private var displayableSummaryCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("SUMMARY")
+                    .font(.caption)
+                    .fontWeight(.bold)
+                    .foregroundColor(.secondary)
+
+                if let zone = workout.displayIntensityZone {
+                    Text(zone.displayName)
+                        .font(.caption2)
+                        .fontWeight(.bold)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(zone.color.opacity(0.8)))
+                        .foregroundColor(.white)
+                }
+
+                Spacer()
+
+                HStack(spacing: 4) {
+                    Image(systemName: "calendar")
+                        .font(.caption)
+                    Text(workout.displayDate, style: .date)
+                        .font(.caption)
+                }
+                .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 20) {
+                VStack(alignment: .leading, spacing: 8) {
+                    if !workout.displayTotalTime.isEmpty {
+                        DataRow(label: "Time", value: workout.displayTotalTime)
+                    }
+                    if workout.displayTotalDistance > 0 {
+                        DataRow(label: "Distance", value: "\(workout.displayTotalDistance)m")
+                    }
+                }
+
+                Spacer()
+
+                VStack(alignment: .trailing, spacing: 8) {
+                    if !workout.displayAverageSplit.isEmpty {
+                        DataRow(label: "Split", value: workout.displayAverageSplit)
+                    }
+                }
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+        )
+    }
+
+    // MARK: - Social Bar (Chups + Comments)
+
+    private var socialBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                // Chup button
+                Button {
+                    Task { await toggleChup() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: chupInfo.currentUserChupped ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                            .scaleEffect(isChupAnimating ? 1.3 : 1.0)
+                        Text("Chup")
+                            .font(.subheadline)
+                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                    }
+                }
+                .simultaneousGesture(
+                    LongPressGesture(minimumDuration: 1.0)
+                        .onEnded { _ in
+                            withAnimation(.spring(response: 0.5, dampingFraction: 0.5)) {
+                                isBigChup = true
+                            }
+                            HapticService.shared.bigChupFeedback()
+                            if !chupInfo.currentUserChupped {
+                                Task {
+                                    let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                    if let wid = effectiveWorkoutRecordID,
+                                       let result = try? await socialService.toggleChup(workoutID: wid, userID: currentUserID, username: myUsername),
+                                       result {
+                                        chupInfo.currentUserChupped = true
+                                        chupInfo.count += 1
+                                    }
+                                }
+                            }
+                        }
+                )
+
+                if chupInfo.count > 0 {
+                    Text(chupInfo.count == 1 ? "1 Chup" : "\(chupInfo.count) Chups")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
+
+                // Comment count
+                HStack(spacing: 4) {
+                    Image(systemName: "bubble.right")
+                        .foregroundColor(.secondary)
+                    if !comments.isEmpty {
+                        Text("\(comments.count)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    // MARK: - Splits / Intervals
+
     @ViewBuilder
     private var intervalsContent: some View {
-        if workout.category == .interval && !sortedIntervals.isEmpty {
-            intervalCardsView
-            PageIndicator(currentPage: currentIntervalIndex, totalPages: sortedIntervals.count)
-            swipeHintView
-        } else if !sortedIntervals.isEmpty {
-            SplitsListView(
-                intervals: sortedIntervals,
-                workoutType: workout.workoutType,
-                fastestId: fastestInterval?.id,
-                slowestId: slowestInterval?.id
-            )
+        if let lw = localWorkout {
+            if lw.category == .interval && !sortedIntervals.isEmpty {
+                intervalCardsView
+                PageIndicator(currentPage: currentIntervalIndex, totalPages: sortedIntervals.count)
+                swipeHintView
+            } else if !sortedIntervals.isEmpty {
+                SplitsListView(
+                    intervals: sortedIntervals,
+                    workoutType: lw.workoutType,
+                    fastestId: fastestInterval?.id,
+                    slowestId: slowestInterval?.id
+                )
+            }
         }
     }
 
@@ -135,13 +379,70 @@ struct EnhancedWorkoutDetailView: View {
         }
     }
 
+    // MARK: - Inline Comments Section
+
+    private var commentsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("COMMENTS")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundColor(.secondary)
+
+            if comments.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "bubble.left.and.bubble.right")
+                        .font(.system(size: 30))
+                        .foregroundColor(.secondary)
+                    Text("No comments yet")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 16)
+            } else {
+                ForEach(comments) { comment in
+                    CommentRow(
+                        comment: comment,
+                        onHeart: { Task { await heartComment(comment) } },
+                        onProfileTap: {}
+                    )
+                }
+            }
+
+            // Comment input
+            HStack(spacing: 8) {
+                TextField("Add a comment...", text: $newCommentText)
+                    .textFieldStyle(.roundedBorder)
+
+                Button {
+                    Task { await postComment() }
+                } label: {
+                    Text("Send")
+                        .fontWeight(.semibold)
+                        .foregroundColor(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty ? .secondary : .blue)
+                }
+                .disabled(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding()
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.systemBackground))
+                .shadow(color: .black.opacity(0.1), radius: 4, y: 2)
+        )
+    }
+
+    // MARK: - Image Viewer Sheet
+
     @ViewBuilder
     private var imageViewerSheet: some View {
-        if let imageData = workout.imageData,
+        if let imageData = localWorkout?.imageData,
            let uiImage = UIImage(data: imageData) {
-            FullScreenImageViewer(image: uiImage, workoutType: workout.workoutType)
+            FullScreenImageViewer(image: uiImage, workoutType: workout.displayWorkoutType)
         }
     }
+
+    // MARK: - Helpers
 
     private var fastestInterval: Interval? {
         sortedIntervals.min { parseTime($0.time) < parseTime($1.time) }
@@ -152,16 +453,60 @@ struct EnhancedWorkoutDetailView: View {
     }
 
     private func parseTime(_ timeString: String) -> Double {
-        // Parse "4:02.1" to 242.1 seconds
         let components = timeString.split(separator: ":")
         guard components.count == 2,
               let minutes = Double(components[0]),
-              let seconds = Double(components[1]) else {
-            return 0
-        }
+              let seconds = Double(components[1]) else { return 0 }
         return minutes * 60 + seconds
     }
+
+    // MARK: - Social Actions
+
+    private func toggleChup() async {
+        guard let wid = effectiveWorkoutRecordID else { return }
+        let myUsername = socialService.myProfile?["username"] as? String ?? ""
+        do {
+            let result = try await socialService.toggleChup(workoutID: wid, userID: currentUserID, username: myUsername)
+            chupInfo.currentUserChupped = result
+            chupInfo.count += result ? 1 : -1
+            if result {
+                HapticService.shared.chupFeedback()
+                withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
+            }
+        } catch {
+            print("⚠️ Chup failed: \(error)")
+        }
+    }
+
+    private func postComment() async {
+        let text = newCommentText.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty, let wid = effectiveWorkoutRecordID else { return }
+        let myUsername = socialService.myProfile?["username"] as? String ?? ""
+        do {
+            let comment = try await socialService.postComment(workoutID: wid, userID: currentUserID, username: myUsername, text: text)
+            comments.append(comment)
+            newCommentText = ""
+            HapticService.shared.lightImpact()
+        } catch {
+            print("⚠️ Comment failed: \(error)")
+        }
+    }
+
+    private func heartComment(_ comment: CommentInfo) async {
+        do {
+            let hearted = try await socialService.toggleCommentHeart(commentID: comment.id, userID: currentUserID)
+            if let index = comments.firstIndex(where: { $0.id == comment.id }) {
+                comments[index].currentUserHearted = hearted
+                comments[index].heartCount += hearted ? 1 : -1
+            }
+            HapticService.shared.commentHeartFeedback()
+        } catch {
+            print("⚠️ Heart failed: \(error)")
+        }
+    }
 }
+
 
 // MARK: - Supporting Components
 
