@@ -96,13 +96,16 @@ class TableParserService {
                 log("Attempting to parse as interval workout...")
                 if let interval = matcher.parseIntervalWorkout(desc) {
                     table.category = .interval
-                    table.workoutType = desc
+                    table.isVariableInterval = interval.isVariable
+                    table.workoutType = desc  // Temporary — will be replaced after parsing for variable
                     table.reps = interval.reps
-                    table.workPerRep = interval.workTime
+                    table.workPerRep = interval.isVariable ? nil : interval.workTime
                     table.restPerRep = interval.restTime
-                    log("✓ Classified as INTERVALS")
+                    log("✓ Classified as \(interval.isVariable ? "VARIABLE " : "")INTERVALS")
                     log("  Reps: \(interval.reps)")
-                    log("  Work per rep: \(interval.workTime)")
+                    if !interval.isVariable {
+                        log("  Work per rep: \(interval.workTime)")
+                    }
                     log("  Rest per rep: \(interval.restTime)")
                 } else {
                     log("Not an interval pattern, checking general workout type...")
@@ -169,73 +172,9 @@ class TableParserService {
             log("Using default column order: time | meters | split | rate")
         }
 
-        // Compute indices for HR detection and subsequent phases
-        let summaryIndex = anchorIndex + 4
-        let dataStartIndex = anchorIndex + 5
-
-        // HR Column Detection: PM5 shows HR as a 5th column when monitor connected
-        // There is no header for HR — detect by peeking at data row values
-        log("\n=== HR COLUMN DETECTION ===")
-        if !columnOrder.contains(.heartRate) {
-            // Peek at summary row + first 2 data rows
-            let peekIndices = [summaryIndex, dataStartIndex, dataStartIndex + 1]
-                .filter { $0 < rows.count }
-
-            var rowsWithExtraHR = 0
-            var sampleHRValues: [String] = []
-
-            for peekIdx in peekIndices {
-                let row = rows[peekIdx]
-
-                // Extract values using same logic as parseDataRow
-                var values: [String] = []
-                for fragment in row.fragments {
-                    let normalized = matcher.normalize(fragment.text)
-
-                    // Skip junk labels
-                    if matcher.isJunk(fragment.text) || matcher.isJunk(normalized) { continue }
-
-                    // Handle combined split+rate
-                    if let combined = matcher.parseCombinedSplitRate(normalized) {
-                        values.append(combined.split)
-                        values.append(combined.rate)
-                        continue
-                    }
-
-                    // Split smooshed text
-                    let split = matcher.splitSmooshedText(normalized)
-                    values.append(contentsOf: split)
-                }
-
-                log("  Peek row \(peekIdx): \(values.count) values, columnOrder has \(columnOrder.count) columns")
-
-                // Check if there are extra values beyond columnOrder
-                if values.count > columnOrder.count {
-                    // Check if trailing value(s) look like HR (integer 40-220)
-                    let extraValues = Array(values[columnOrder.count...])
-                    for val in extraValues {
-                        if let intVal = Int(val), intVal >= 40, intVal <= 220 {
-                            rowsWithExtraHR += 1
-                            sampleHRValues.append(val)
-                            break  // Only count first valid HR per row
-                        }
-                    }
-                }
-            }
-
-            // Require at least 2 rows with HR to avoid false positives
-            if rowsWithExtraHR >= 2 {
-                columnOrder.append(.heartRate)
-                log("  ✓ Detected heart rate column (samples: \(sampleHRValues.joined(separator: ", ")))")
-            } else {
-                log("  No heart rate column detected (\(rowsWithExtraHR)/\(peekIndices.count) rows had extra HR-range values)")
-            }
-        } else {
-            log("Heart rate column already in columnOrder")
-        }
-
         // Phase 6: Parse summary/averages row (first data row)
         log("\n=== PHASE 6: PARSE SUMMARY ROW ===")
+        let summaryIndex = anchorIndex + 4
         if summaryIndex < rows.count {
             log("Parsing summary row \(summaryIndex)...")
             if let avg = parseDataRow(rows[summaryIndex], columnOrder: columnOrder) {
@@ -245,7 +184,6 @@ class TableParserService {
                 log("  Meters: \(avg.meters?.text ?? "-")")
                 log("  Split: \(avg.splitPer500m?.text ?? "-")")
                 log("  Rate:  \(avg.strokeRate?.text ?? "-")")
-                log("  HR:    \(avg.heartRate?.text ?? "-")")
             } else {
                 log("❌ Failed to parse summary row (insufficient fields)")
             }
@@ -255,35 +193,68 @@ class TableParserService {
 
         // Phase 7: Parse data rows (intervals or splits)
         log("\n=== PHASE 7: PARSE DATA ROWS ===")
+        let dataStartIndex = anchorIndex + 5
         var dataRows: [TableRow] = []
         log("Parsing data rows starting from row \(dataStartIndex)...")
         for i in dataStartIndex..<rows.count {
+            // Skip rest rows (variable intervals have rest rows interleaved)
+            // Rest rows start with "r" followed by a time, e.g., "r2:00  23"
+            let rowText = rows[i].normalizedText.trimmingCharacters(in: .whitespaces)
+            if rowText.hasPrefix("r") && rowText.count >= 4 {
+                // Check if it's "rN:NN" pattern (rest duration)
+                let afterR = String(rowText.dropFirst())
+                if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
+                    log("  Row \(i): skipped (rest row: '\(rows[i].joinedText)')")
+                    continue
+                }
+            }
+
+            // Also check individual fragments — the "r2:00" might be a single fragment
+            if let firstFragment = rows[i].fragments.first {
+                let text = firstFragment.text.trimmingCharacters(in: .whitespaces)
+                if text.hasPrefix("r") && text.count >= 4 {
+                    let afterR = String(text.dropFirst())
+                    if matcher.matchTime(afterR) || matcher.matches(afterR, pattern: #"^\d{1,2}:\d{2}"#) {
+                        log("  Row \(i): skipped (rest row fragment: '\(text)')")
+                        continue
+                    }
+                }
+            }
+
             if let row = parseDataRow(rows[i], columnOrder: columnOrder) {
                 dataRows.append(row)
-                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-"), hr=\(row.heartRate?.text ?? "-")")
+                log("✓ Row \(i): time=\(row.time?.text ?? "-"), meters=\(row.meters?.text ?? "-"), split=\(row.splitPer500m?.text ?? "-"), rate=\(row.strokeRate?.text ?? "-")")
             } else {
                 log("  Row \(i): skipped (insufficient fields)")
             }
         }
-        // --- Coast tail detection (after Phase 7) ---
-        // On single-piece workouts, the PM5 sometimes records a final partial row
-        // after the rower stops (very low rate, few meters). Drop it.
-        if dataRows.count >= 2 {
-            let lastRow = dataRows.last!
-            let otherRows = dataRows.dropLast()
-
-            let lastHasRate = lastRow.strokeRate != nil
-            let othersWithRate = otherRows.filter { $0.strokeRate != nil }.count
-
-            if !lastHasRate && othersWithRate == otherRows.count {
-                // Every other row has a valid rate, but the last one doesn't.
-                // This is a coast/cooldown tail — remove it.
-                log("  Removing coast tail row: time=\(lastRow.time?.text ?? "-"), rate=nil (all other rows have valid rates)")
-                dataRows.removeLast()
-            }
-        }
         table.rows = dataRows
         log("Parsed \(dataRows.count) data rows total")
+
+        // Variable Interval Naming
+        // For variable intervals, the descriptor is truncated and unreliable.
+        // Generate the workout name from the parsed interval meters.
+        if table.isVariableInterval == true && !dataRows.isEmpty {
+            log("\n--- VARIABLE INTERVAL NAMING ---")
+            let metersComponents = dataRows.compactMap { row -> String? in
+                guard let meters = row.meters?.text else { return nil }
+                return "\(meters)m"
+            }
+            if !metersComponents.isEmpty {
+                let generatedName = metersComponents.joined(separator: " / ")
+                table.workoutType = generatedName
+                table.description = generatedName
+                log("✓ Generated variable interval name: \"\(generatedName)\"")
+            } else {
+                log("⚠️ Could not generate variable interval name (no meters parsed)")
+            }
+        }
+
+        // Update reps count from data rows for variable intervals
+        if table.isVariableInterval == true {
+            table.reps = dataRows.count
+            log("  Updated variable interval reps from data rows: \(dataRows.count)")
+        }
 
         // Phase 8: Fallback classification if descriptor was unreadable
         log("\n=== PHASE 8: FALLBACK CLASSIFICATION ===")
@@ -311,7 +282,6 @@ class TableParserService {
         log("\n=== PARSING COMPLETE ===")
         log("Data rows: \(dataRows.count)")
         log("Category: \(table.category?.rawValue ?? "unknown")")
-        log("Columns detected: \(columnOrder.map { "\($0)" }.joined(separator: ", "))")
         log("Overall confidence: \(String(format: "%.0f%%", table.averageConfidence * 100))")
 
         return (table, debugLog.joined(separator: "\n"))
@@ -413,18 +383,6 @@ class TableParserService {
                 if matcher.matchWorkoutType(normalizedPart) {
                     log("    ✓ Matches")
                     return normalizedPart
-                }
-            }
-
-            // Try combining adjacent space-separated parts that look like split descriptor
-            // e.g., "2x20:00" + "11:15r" → "2x20:0011:15r" → normalizeDescriptor → "2x20:00/1:15r"
-            if parts.count == 2 {
-                let combined = parts[0] + parts[1]
-                let normalizedCombined = matcher.normalizeDescriptor(combined)
-                log("  Trying combined parts: '\(combined)' -> '\(normalizedCombined)'")
-                if matcher.matchWorkoutType(normalizedCombined) {
-                    log("    ✓ Combined parts match")
-                    return normalizedCombined
                 }
             }
         }
