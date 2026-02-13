@@ -18,8 +18,8 @@ struct TextPatternMatcher {
 
     // MARK: - Regex Patterns
 
-    /// Time format: "4:00.0", "12:00.0", or "1:23:45.6"
-    static let timePattern = #"^\d{1,2}:\d{2}(:\d{2})?\.\d$"#
+    /// Time format: "4:00.0", "12:00.0", "1:23:45.6", or ":39.1" (OCR may drop leading zero)
+    static let timePattern = #"^\d{0,2}:\d{2}(:\d{2})?\.\d$"#
 
     /// Split pace format: "1:41.2" or "1:41.29"
     static let splitPattern = #"^\d:\d{2}\.\d{1,2}$"#
@@ -97,21 +97,33 @@ struct TextPatternMatcher {
             }
         }
 
-        // 6. Strip trailing ellipsis + count from variable interval descriptors
-        // e.g., "v40:00/2:00r...4" → "v40:00/2:00r" or "₩40:00/2:00r.4" → "₩40:00/2:00r"
-        // The "...N" or ".N" is the rep count indicator the PM5 appends when truncating
-        // UPDATED: Now matches single dot too (\.+ instead of \.{2,})
-        result = result.replacingOccurrences(of: #"\.+\d*$"#, with: "", options: .regularExpression)
+        // 6. Handle trailing ellipsis + rep count from variable interval descriptors
+        // e.g., "₩40:00/2:00r.4" → extract "4", then reconstruct as "₩4x40:00/2:00r"
+        // e.g., "v40:00/2:00r...4" → extract "4", then reconstruct as "v4x40:00/2:00r"
+        // The ".N" or "...N" is the rep count the PM5 appends when truncating
+        var extractedRepCount: String? = nil
+        if let repMatch = result.range(of: #"\.+(\d+)$"#, options: .regularExpression) {
+            let trailing = String(result[repMatch])
+            extractedRepCount = trailing.filter { $0.isNumber }
+            result = String(result[result.startIndex..<repMatch.lowerBound])
+        } else {
+            // Strip trailing dots with no number
+            result = result.replacingOccurrences(of: #"\.+$"#, with: "", options: .regularExpression)
+        }
 
-        // 7. Normalize variable interval prefix to "v"
+        // 7. Normalize variable interval prefix to "v" and reconstruct standard format
         // The PM5 "v" is frequently misread as: ₩ (Korean Won), W, w, V, и (Cyrillic), ν (Greek), etc.
-        // If the string starts with non-digit character(s) and contains "/" (rest separator),
-        // replace the prefix with "v" for consistent downstream handling.
+        // If we extracted a rep count from the trailing ellipsis, reconstruct: "v4x40:00/2:00r"
         if let firstDigitIndex = result.firstIndex(where: { $0.isNumber }) {
             let prefix = String(result[result.startIndex..<firstDigitIndex])
             if !prefix.isEmpty && result.contains("/") {
-                // This is likely a variable interval descriptor (has prefix + contains rest separator)
-                result = "v" + String(result[firstDigitIndex...])
+                let afterPrefix = String(result[firstDigitIndex...])
+                if let repCount = extractedRepCount, !repCount.isEmpty {
+                    // Reconstruct standard interval format: "v" + reps + "x" + time/rest
+                    result = "v" + repCount + "x" + afterPrefix
+                } else {
+                    result = "v" + afterPrefix
+                }
             }
         }
 
