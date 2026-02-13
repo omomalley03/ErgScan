@@ -147,39 +147,76 @@ struct FriendsView: View {
                             }
                         }
 
-                        // Friend activity feed
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Activity")
-                                .font(.headline)
-                                .padding(.horizontal)
-
-                            if socialService.friendActivity.isEmpty {
-                                VStack(spacing: 12) {
-                                    Image(systemName: "figure.rowing")
-                                        .font(.system(size: 40))
-                                        .foregroundColor(.secondary)
-
-                                    Text(socialService.friends.isEmpty ? "No friends yet" : "No recent activity")
-                                        .font(.subheadline)
-                                        .foregroundColor(.secondary)
-
-                                    if socialService.friends.isEmpty {
-                                        Text("Search for friends to see their workouts")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .multilineTextAlignment(.center)
+                        // Friends quick-access
+                        if !socialService.friends.isEmpty {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text("Your Friends")
+                                        .font(.headline)
+                                    Spacer()
+                                    NavigationLink(destination: FriendsListView()) {
+                                        Text("See All")
+                                            .font(.subheadline)
+                                            .foregroundColor(.blue)
                                     }
                                 }
-                                .padding(.vertical, 40)
-                                .frame(maxWidth: .infinity)
-                            } else {
-                                ForEach(socialService.friendActivity) { workout in
-                                    FriendActivityCard(workout: workout)
-                                        .padding(.horizontal)
+                                .padding(.horizontal)
+
+                                ForEach(socialService.friends.prefix(5)) { friend in
+                                    NavigationLink(destination: FriendProfileView(
+                                        userID: friend.id,
+                                        username: friend.username,
+                                        displayName: friend.displayName
+                                    )) {
+                                        HStack(spacing: 10) {
+                                            Circle()
+                                                .fill(Color.blue.opacity(0.2))
+                                                .frame(width: 36, height: 36)
+                                                .overlay(
+                                                    Image(systemName: "person.fill")
+                                                        .font(.caption)
+                                                        .foregroundColor(.blue)
+                                                )
+                                            VStack(alignment: .leading, spacing: 2) {
+                                                Text("@\(friend.username)")
+                                                    .font(.subheadline)
+                                                    .fontWeight(.semibold)
+                                                Text(friend.displayName)
+                                                    .font(.caption)
+                                                    .foregroundColor(.secondary)
+                                            }
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.caption)
+                                                .foregroundColor(.secondary)
+                                        }
+                                        .padding(.vertical, 6)
+                                        .padding(.horizontal, 12)
+                                        .background(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .fill(Color(.secondarySystemBackground))
+                                        )
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(.horizontal)
                                 }
                             }
+                            .padding(.top)
+                        } else if searchText.isEmpty && socialService.searchResults.isEmpty {
+                            VStack(spacing: 12) {
+                                Image(systemName: "person.2.slash")
+                                    .font(.system(size: 40))
+                                    .foregroundColor(.secondary)
+                                Text("No friends yet")
+                                    .font(.subheadline)
+                                    .foregroundColor(.secondary)
+                                Text("Search for friends above to connect")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 40)
                         }
-                        .padding(.top)
                     }
                 }
                 .padding(.vertical)
@@ -189,14 +226,14 @@ struct FriendsView: View {
             .refreshable {
                 if hasUsername {
                     await socialService.loadPendingRequests()
-                    await socialService.loadFriendActivity()
+                    await socialService.loadFriends()
                 }
             }
             .onAppear {
                 if hasUsername {
                     Task {
                         await socialService.loadPendingRequests()
-                        await socialService.loadFriendActivity()
+                        await socialService.loadFriends()
                     }
                 }
             }

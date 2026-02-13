@@ -1,10 +1,3 @@
-//
-//  UserSearchResultRow.swift
-//  ErgScan1
-//
-//  Created by Claude on 2/11/26.
-//
-
 import SwiftUI
 
 struct UserSearchResultRow: View {
@@ -23,23 +16,33 @@ struct UserSearchResultRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Avatar placeholder
-            Circle()
-                .fill(Color.blue.opacity(0.2))
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .foregroundColor(.blue)
-                )
+            // Avatar + username (tappable → profile)
+            NavigationLink(destination: FriendProfileView(
+                userID: user.id,
+                username: user.username,
+                displayName: user.displayName
+            )) {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 50, height: 50)
+                        .overlay(
+                            Image(systemName: "person.fill")
+                                .foregroundColor(.blue)
+                        )
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("@\(user.username)")
-                    .font(.headline)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("@\(user.username)")
+                            .font(.headline)
+                            .foregroundColor(.primary)
 
-                Text(user.displayName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                        Text(user.displayName)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
+            .buttonStyle(.plain)
 
             Spacer()
 

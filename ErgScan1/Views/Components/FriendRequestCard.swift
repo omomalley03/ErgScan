@@ -1,10 +1,3 @@
-//
-//  FriendRequestCard.swift
-//  ErgScan1
-//
-//  Created by Claude on 2/11/26.
-//
-
 import SwiftUI
 
 struct FriendRequestCard: View {
@@ -14,23 +7,33 @@ struct FriendRequestCard: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Avatar placeholder
-            Circle()
-                .fill(Color.blue.opacity(0.2))
-                .frame(width: 50, height: 50)
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .foregroundColor(.blue)
-                )
+            // Avatar + name (tappable → profile)
+            NavigationLink(destination: FriendProfileView(
+                userID: request.senderID,
+                username: request.senderUsername,
+                displayName: request.senderDisplayName
+            )) {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.blue.opacity(0.2))
+                        .frame(width: 50, height: 50)
+                        .overlay(
+                            Image(systemName: "person.fill")
+                                .foregroundColor(.blue)
+                        )
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("@\(request.senderUsername)")
-                    .font(.headline)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("@\(request.senderUsername)")
+                            .font(.headline)
+                            .foregroundColor(.primary)
 
-                Text(request.senderDisplayName)
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
+                        Text(request.senderDisplayName)
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                    }
+                }
             }
+            .buttonStyle(.plain)
 
             Spacer()
 

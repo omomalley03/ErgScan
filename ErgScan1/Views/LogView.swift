@@ -11,6 +11,7 @@ import SwiftData
 struct LogView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var socialService: SocialService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
     @Binding var highlightDate: Date?
@@ -22,25 +23,43 @@ struct LogView: View {
         return allWorkouts.filter { $0.userID == currentUser.appleUserID }
     }
 
+    private var myUserID: String {
+        currentUser?.appleUserID ?? ""
+    }
+
     var body: some View {
         NavigationStack {
             if workouts.isEmpty {
                 emptyState
             } else {
                 ScrollViewReader { proxy in
-                    List {
-                        ForEach(workouts) { workout in
-                            NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
-                                WorkoutRow(workout: workout)
+                    ScrollView {
+                        LazyVStack(spacing: 12) {
+                            ForEach(workouts) { workout in
+                                NavigationLink(destination: UnifiedWorkoutDetailView(
+                                    localWorkout: workout,
+                                    currentUserID: myUserID
+                                )) {
+                                    LogWorkoutCard(workout: workout)
+                                }
+                                .buttonStyle(.plain)
+                                .id(workout.id)
+                                .contextMenu {
+                                    Button(role: .destructive) {
+                                        deleteWorkout(workout)
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+                                .background(
+                                    highlightedIDs.contains(workout.id)
+                                        ? RoundedRectangle(cornerRadius: 12).fill(Color.blue.opacity(0.15))
+                                        : nil
+                                )
                             }
-                            .id(workout.id)
-                            .listRowBackground(
-                                highlightedIDs.contains(workout.id)
-                                    ? Color.blue.opacity(0.15)
-                                    : nil
-                            )
                         }
-                        .onDelete(perform: deleteWorkouts)
+                        .padding(.horizontal)
+                        .padding(.bottom, 100)
                     }
                     .navigationTitle("Log")
                     .toolbar {
@@ -50,9 +69,6 @@ struct LogView: View {
                             } label: {
                                 Image(systemName: "magnifyingglass")
                             }
-                        }
-                        ToolbarItem(placement: .navigationBarTrailing) {
-                            EditButton()
                         }
                     }
                     .onAppear {
@@ -121,9 +137,74 @@ struct LogView: View {
 
     // MARK: - Actions
 
-    private func deleteWorkouts(at offsets: IndexSet) {
-        for index in offsets {
-            modelContext.delete(workouts[index])
+    private func deleteWorkout(_ workout: Workout) {
+        let workoutIDString = workout.id.uuidString
+        Task { await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) }
+        modelContext.delete(workout)
+    }
+}
+
+// MARK: - Log Workout Card (condensed feed-style)
+
+struct LogWorkoutCard: View {
+    let workout: Workout
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Row 1: Workout type + zone + erg test + date
+            HStack(spacing: 8) {
+                Text(workout.workoutType)
+                    .font(.headline)
+                    .fontWeight(.bold)
+                    .foregroundColor(.primary)
+
+                if let zone = workout.zone {
+                    ZoneTag(zone: zone)
+                }
+
+                if workout.isErgTest {
+                    Image(systemName: "flag.checkered")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                }
+
+                Spacer()
+
+                Text(workout.date, style: .date)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+
+            // Row 2: Stats
+            HStack(spacing: 16) {
+                if !workout.totalTime.isEmpty {
+                    statRow(label: "Time", value: workout.totalTime)
+                }
+                if let dist = workout.totalDistance, dist > 0 {
+                    statRow(label: "Dist", value: "\(dist)m")
+                }
+                Spacer()
+                if let split = workout.averageSplit, !split.isEmpty {
+                    statRow(label: "Split", value: split)
+                }
+            }
+        }
+        .padding(12)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(Color(.secondarySystemBackground))
+        )
+    }
+
+    private func statRow(label: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.semibold)
+                .monospacedDigit()
         }
     }
 }

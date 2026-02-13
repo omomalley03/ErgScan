@@ -26,4 +26,24 @@ final class HapticService {
     func lightImpact() {
         impactGenerator.impactOccurred()
     }
+
+    /// Medium impact for chup/like actions
+    func chupFeedback() {
+        let generator = UIImpactFeedbackGenerator(style: .medium)
+        generator.impactOccurred()
+    }
+
+    /// Heavy double-tap impact for Big Chup
+    func bigChupFeedback() {
+        let heavy = UIImpactFeedbackGenerator(style: .heavy)
+        heavy.impactOccurred()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            heavy.impactOccurred(intensity: 1.0)
+        }
+    }
+
+    /// Light impact for hearting a comment
+    func commentHeartFeedback() {
+        impactGenerator.impactOccurred()
+    }
 }

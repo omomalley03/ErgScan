@@ -30,11 +30,13 @@ struct BarData: Identifiable {
 struct DashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var socialService: SocialService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
     var onViewDay: ((Date) -> Void)?
     @Query private var allGoals: [Goal]
     @State private var weekOffset: Int = 0  // 0 = this week, 1 = last week, etc.
+    @State private var selectedFeedWorkout: SocialService.SharedWorkoutResult?
 
     private var userGoal: Goal? {
         guard let currentUser = currentUser else { return nil }
@@ -131,6 +133,47 @@ struct DashboardView: View {
         return BarData(label: label, date: date, totalMeters: total, segments: segments, unzonedMeters: unzoned)
     }
 
+    private var myUserID: String {
+        currentUser?.appleUserID ?? ""
+    }
+
+    @ViewBuilder
+    private var friendsActivitySection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Friends Activity")
+                .font(.headline)
+                .padding(.horizontal)
+
+            if socialService.friendActivity.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "figure.rowing")
+                        .font(.system(size: 36))
+                        .foregroundColor(.secondary)
+                    Text(socialService.friends.isEmpty ? "Add friends to see their activity" : "No recent activity")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else {
+                LazyVStack(spacing: 12) {
+                    ForEach(socialService.friendActivity) { workout in
+                        WorkoutFeedCard(
+                            workout: workout,
+                            showProfileHeader: true,
+                            currentUserID: myUserID
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedFeedWorkout = workout
+                        }
+                    }
+                }
+                .padding(.horizontal)
+            }
+        }
+    }
+
     var body: some View {
         NavigationStack {
             if workouts.isEmpty {
@@ -162,24 +205,16 @@ struct DashboardView: View {
                         // )
                         // .padding(.horizontal)
 
-                        // Recents Section — disabled
-                        // if !recentWorkouts.isEmpty {
-                        //     VStack(alignment: .leading, spacing: 12) {
-                        //         Text("Recents")
-                        //             .font(.headline)
-                        //             .padding(.horizontal)
-                        //
-                        //         ForEach(recentWorkouts) { workout in
-                        //             RecentWorkoutWidget(workout: workout)
-                        //                 .padding(.horizontal)
-                        //         }
-                        //     }
-                        // }
+                        // Friends Activity Feed
+                        friendsActivitySection
                     }
                     .padding(.top, 16)
                     .padding(.bottom, 100)
                 }
                 .navigationTitle("Dashboard")
+                .task {
+                    await socialService.loadFriendActivity()
+                }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {
@@ -188,6 +223,9 @@ struct DashboardView: View {
                             Image(systemName: "magnifyingglass")
                         }
                     }
+                }
+                .navigationDestination(item: $selectedFeedWorkout) { workout in
+                    UnifiedWorkoutDetailView(sharedWorkout: workout, currentUserID: myUserID)
                 }
             }
         }
@@ -552,9 +590,10 @@ struct GoalProgressWidget: View {
 
 struct RecentWorkoutWidget: View {
     let workout: Workout
+    var currentUserID: String = ""
 
     var body: some View {
-        NavigationLink(destination: EnhancedWorkoutDetailView(workout: workout)) {
+        NavigationLink(destination: UnifiedWorkoutDetailView(localWorkout: workout, currentUserID: currentUserID)) {
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 8) {

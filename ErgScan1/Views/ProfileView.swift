@@ -10,9 +10,11 @@ import SwiftData
 
 struct ProfileView: View {
     @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var socialService: SocialService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
     @State private var showSettings = false
+    @State private var friendCount: Int = 0
 
     private var workoutCount: Int {
         guard let currentUser = currentUser else { return 0 }
@@ -66,6 +68,24 @@ struct ProfileView: View {
                     }
                     .padding(.horizontal)
 
+                    // Friends Link
+                    NavigationLink(destination: FriendsListView()) {
+                        HStack {
+                            Image(systemName: "person.2.fill")
+                                .foregroundColor(.blue)
+                            Text("\(friendCount) Friends")
+                                .font(.headline)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+
                     // Settings Button
                     Button {
                         showSettings = true
@@ -88,6 +108,13 @@ struct ProfileView: View {
                 }
             }
             .navigationTitle("Profile")
+            .task {
+                friendCount = socialService.friends.count
+                if socialService.friends.isEmpty {
+                    await socialService.loadFriends()
+                    friendCount = socialService.friends.count
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {
