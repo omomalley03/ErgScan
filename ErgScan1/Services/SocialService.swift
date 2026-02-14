@@ -341,6 +341,12 @@ class SocialService: ObservableObject {
     func sendFriendRequest(to receiverID: String) async {
         guard let userID = currentUserID else { return }
 
+        // Prevent friending yourself
+        guard receiverID != userID else {
+            print("⚠️ Cannot send friend request to yourself")
+            return
+        }
+
         do {
             // Check for existing request (skip if record type doesn't exist yet)
             var alreadyExists = false
@@ -486,6 +492,45 @@ class SocialService: ObservableObject {
         } catch {
             print("⚠️ Failed to reject request: \(error)")
             errorMessage = "Could not reject request."
+        }
+    }
+
+    func unfriend(_ friendID: String) async {
+        guard let userID = currentUserID else { return }
+
+        do {
+            // Find all accepted friend requests between current user and friend
+            let predicate1 = NSPredicate(format: "senderID == %@ AND receiverID == %@ AND status == %@", userID, friendID, "accepted")
+            let query1 = CKQuery(recordType: "FriendRequest", predicate: predicate1)
+            let (results1, _) = try await publicDB.records(matching: query1, resultsLimit: 100)
+
+            let predicate2 = NSPredicate(format: "senderID == %@ AND receiverID == %@ AND status == %@", friendID, userID, "accepted")
+            let query2 = CKQuery(recordType: "FriendRequest", predicate: predicate2)
+            let (results2, _) = try await publicDB.records(matching: query2, resultsLimit: 100)
+
+            // Delete all friendship records
+            var recordsToDelete: [CKRecord.ID] = []
+            for (recordID, result) in results1 {
+                guard case .success(_) = result else { continue }
+                recordsToDelete.append(recordID)
+            }
+            for (recordID, result) in results2 {
+                guard case .success(_) = result else { continue }
+                recordsToDelete.append(recordID)
+            }
+
+            if !recordsToDelete.isEmpty {
+                _ = try await publicDB.modifyRecords(saving: [], deleting: recordsToDelete)
+                print("✅ Unfriended user: \(friendID)")
+            }
+
+            // Refresh friends list and activity
+            await loadFriends()
+            await loadFriendActivity()
+            HapticService.shared.lightImpact()
+        } catch {
+            print("⚠️ Failed to unfriend: \(error)")
+            errorMessage = "Could not remove friend."
         }
     }
 

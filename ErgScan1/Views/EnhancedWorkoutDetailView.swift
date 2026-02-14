@@ -83,10 +83,17 @@ struct UnifiedWorkoutDetailView: View {
     /// Determine workout category from workoutType string
     private var friendWorkoutCategory: WorkoutCategory {
         let type = workout.displayWorkoutType
-        // Interval workouts contain "x" and "/" (e.g., "3x4:00/3:00r")
+
+        // Regular intervals contain "x" and "/" (e.g., "3x4:00/3:00r", "5x2000m/2:00r")
         if type.contains("x") && type.contains("/") {
             return .interval
         }
+
+        // Variable intervals contain "/" but NOT "Nx" pattern (e.g., "3000m / 2000m / 1000m", "4:00 / 6:00 / 8:00")
+        if type.contains("/") && type.range(of: "^\\d+x", options: .regularExpression) == nil {
+            return .interval
+        }
+
         // Single workouts are distance/time based (e.g., "2000m", "20:00")
         return .single
     }
@@ -131,7 +138,7 @@ struct UnifiedWorkoutDetailView: View {
                 }
             }
             .padding()
-            .padding(.bottom, 80)
+            // .padding(.bottom, 80)
         }
         .overlay {
             BigChupOverlay(isShowing: $isBigChup)
@@ -164,8 +171,8 @@ struct UnifiedWorkoutDetailView: View {
                     localWorkoutID: lw.id.uuidString
                 )
             }
-            // Fetch full workout detail for friend workouts
-            if !isOwnWorkout, !workout.workoutRecordID.isEmpty {
+            // Fetch full workout detail when no local workout is available
+            if localWorkout == nil, !workout.workoutRecordID.isEmpty {
                 fetchedDetail = await socialService.fetchWorkoutDetail(sharedWorkoutID: workout.workoutRecordID)
             }
             // Load social data
@@ -737,8 +744,6 @@ struct IntervalCardView: View {
                     LargeDataField(label: "Heart Rate", value: hr, suffix: "bpm")
                 }
             }
-
-            Spacer()
         }
         .padding(24)
         .background(

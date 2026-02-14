@@ -13,6 +13,7 @@ struct FriendProfileView: View {
     @State private var friendCount: Int = 0
     @State private var isLoading = true
     @State private var selectedWorkout: SocialService.SharedWorkoutResult?
+    @State private var showUnfriendConfirmation = false
 
     private var myUserID: String {
         currentUser?.appleUserID ?? ""
@@ -86,6 +87,26 @@ struct FriendProfileView: View {
         }
         .navigationTitle(username)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            if relationship == .friends && userID != myUserID {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showUnfriendConfirmation = true
+                    } label: {
+                        Image(systemName: "person.badge.minus")
+                            .foregroundColor(.red)
+                    }
+                }
+            }
+        }
+        .alert("Unfriend @\(username)?", isPresented: $showUnfriendConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Unfriend", role: .destructive) {
+                unfriend()
+            }
+        } message: {
+            Text("You will no longer see each other's workouts.")
+        }
         .navigationDestination(item: $selectedWorkout) { workout in
             UnifiedWorkoutDetailView(sharedWorkout: workout, currentUserID: myUserID)
         }
@@ -99,6 +120,14 @@ struct FriendProfileView: View {
     private func loadProfileData() async {
         isLoading = true
         defer { isLoading = false }
+
+        // If viewing your own profile, just show workouts
+        if userID == myUserID {
+            friendCount = await socialService.fetchFriendCount(for: userID)
+            relationship = .friends
+            workouts = await socialService.fetchSharedWorkouts(for: userID)
+            return
+        }
 
         // Fetch friend count
         friendCount = await socialService.fetchFriendCount(for: userID)
@@ -150,6 +179,14 @@ struct FriendProfileView: View {
                 await socialService.rejectRequest(request)
             }
             relationship = .notFriends
+        }
+    }
+
+    private func unfriend() {
+        Task {
+            await socialService.unfriend(userID)
+            relationship = .notFriends
+            workouts = []
         }
     }
 }

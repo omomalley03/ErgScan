@@ -209,7 +209,7 @@ struct DashboardView: View {
                         friendsActivitySection
                     }
                     .padding(.top, 16)
-                    .padding(.bottom, 80)
+                    // .padding(.bottom, 80)
                 }
                 .navigationTitle("Dashboard")
                 .task {
