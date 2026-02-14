@@ -81,6 +81,7 @@ struct ParsedTableView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 8)
+                .padding(.bottom, 80)
             }
         } else {
             // Empty state

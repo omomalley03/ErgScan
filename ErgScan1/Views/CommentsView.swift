@@ -99,7 +99,7 @@ struct CommentsView: View {
                             .padding(.vertical, 40)
                         }
                     }
-                    .padding()
+                    .padding(.bottom, 80)
                 }
 
                 Divider()

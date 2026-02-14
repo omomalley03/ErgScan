@@ -38,7 +38,7 @@ extension Workout: WorkoutDisplayable {
     var displayUsername: String { user?.username ?? "" }
     var displayDate: Date { date }
     var displayWorkoutType: String { workoutType }
-    var displayTotalTime: String { totalTime }
+    var displayTotalTime: String { workTime }
     var displayTotalDistance: Int { totalDistance ?? 0 }
     var displayAverageSplit: String { averageSplit ?? "" }
     var displayIntensityZone: IntensityZone? { zone }

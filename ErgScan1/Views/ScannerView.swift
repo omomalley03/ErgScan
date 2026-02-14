@@ -313,6 +313,7 @@ struct ScannerView: View {
                 }
             }
             .padding()
+            
         }
         .background(Color(.systemBackground))
     }

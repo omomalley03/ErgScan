@@ -220,6 +220,7 @@ struct FriendsView: View {
                     }
                 }
                 .padding(.vertical)
+                .padding(.bottom, 80)
             }
             .scrollDismissesKeyboard(.interactively)
             .navigationTitle("Friends")

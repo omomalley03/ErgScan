@@ -59,7 +59,7 @@ struct LogView: View {
                             }
                         }
                         .padding(.horizontal)
-                        .padding(.bottom, 100)
+                        
                     }
                     .navigationTitle("Log")
                     .toolbar {
@@ -180,8 +180,8 @@ struct LogWorkoutCard: View {
 
             // Row 2: Stats
             HStack(spacing: 16) {
-                if !workout.totalTime.isEmpty {
-                    statRow(label: "Time", value: workout.totalTime)
+                if !workout.workTime.isEmpty {
+                    statRow(label: "Time", value: workout.workTime)
                 }
                 if let dist = workout.totalDistance, dist > 0 {
                     statRow(label: "Dist", value: "\(dist)m")

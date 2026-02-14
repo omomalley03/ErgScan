@@ -30,7 +30,7 @@ struct ComparisonDetailView: View {
                     noDataView
                 }
             }
-            .padding()
+            .padding(.bottom, 80)
         }
         .navigationTitle("Comparison")
         .navigationBarTitleDisplayMode(.inline)

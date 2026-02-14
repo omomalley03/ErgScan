@@ -137,7 +137,7 @@ struct ParsedTableDisplayView: View {
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
             }
-            .padding()
+            .padding(.bottom, 80)
         }
         .frame(maxHeight: .infinity)
         .background(Color(.systemBackground))

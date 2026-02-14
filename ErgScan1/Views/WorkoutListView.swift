@@ -44,7 +44,6 @@ struct WorkoutListView: View {
                         }
                     }
                     .padding(.horizontal)
-                    .padding(.bottom, 100)
                 }
                 .navigationTitle("Workouts")
                 .refreshable {

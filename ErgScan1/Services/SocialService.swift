@@ -814,7 +814,7 @@ class SocialService: ObservableObject {
                 await publishWorkout(
                     workoutType: workout.workoutType,
                     date: workout.date,
-                    totalTime: workout.totalTime,
+                    totalTime: workout.workTime,
                     totalDistance: workout.totalDistance ?? 0,
                     averageSplit: workout.averageSplit ?? "",
                     intensityZone: workout.intensityZone ?? "",

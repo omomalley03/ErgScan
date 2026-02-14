@@ -80,35 +80,14 @@ struct UnifiedWorkoutDetailView: View {
             .sorted(by: { $0.orderIndex < $1.orderIndex })
     }
 
-    /// Determine workout category from workoutType string and interval pattern
+    /// Determine workout category from workoutType string
     private var friendWorkoutCategory: WorkoutCategory {
         let type = workout.displayWorkoutType
-
-        // Regular interval workouts contain "x" and "/" (e.g., "3x4:00/3:00r")
+        // Interval workouts contain "x" and "/" (e.g., "3x4:00/3:00r")
         if type.contains("x") && type.contains("/") {
             return .interval
         }
-
-        // Variable interval workouts contain "Variable" or have distinct interval distances
-        if type.lowercased().contains("variable") {
-            return .interval
-        }
-
-        // Check interval pattern: if distances are progressively increasing by same amount,
-        // it's a single piece with splits. Otherwise, it's intervals.
-        let distances = friendSortedIntervals.compactMap { Int($0.meters) }
-        if distances.count >= 2 {
-            // Check if intervals are evenly spaced (splits from continuous piece)
-            let spacings = zip(distances, distances.dropFirst()).map { $1 - $0 }
-            let firstSpacing = spacings.first ?? 0
-            let isEvenlySpaced = spacings.allSatisfy { abs($0 - firstSpacing) <= firstSpacing / 10 } // 10% tolerance
-
-            // Evenly spaced = single piece with splits
-            // Uneven spacing = interval workout
-            return isEvenlySpaced ? .single : .interval
-        }
-
-        // Default to single for distance/time based (e.g., "2000m", "20:00")
+        // Single workouts are distance/time based (e.g., "2000m", "20:00")
         return .single
     }
 
@@ -151,7 +130,7 @@ struct UnifiedWorkoutDetailView: View {
                     commentsSection
                 }
             }
-            .padding()
+            .padding(.bottom, 80)
         }
         .overlay {
             BigChupOverlay(isShowing: $isBigChup)
