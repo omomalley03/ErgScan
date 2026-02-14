@@ -77,6 +77,9 @@ struct LogView: View {
                     .onChange(of: highlightDate) { _, _ in
                         processHighlight(proxy: proxy)
                     }
+                    .refreshable {
+                        // Triggers SwiftData @Query refresh
+                    }
                 }
             }
         }

@@ -115,6 +115,10 @@ struct ProfileView: View {
                     friendCount = socialService.friends.count
                 }
             }
+            .refreshable {
+                await socialService.loadFriends()
+                friendCount = socialService.friends.count
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button {

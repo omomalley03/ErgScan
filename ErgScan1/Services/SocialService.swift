@@ -54,6 +54,13 @@ class SocialService: ObservableObject {
         let isErgTest: Bool
     }
 
+    struct WorkoutDetailResult {
+        let ergImageData: Data?
+        let intervals: [[String: Any]]
+        let ocrConfidence: Double
+        let wasManuallyEdited: Bool
+    }
+
     // Track which users we've already sent requests to (for UI state)
     @Published var sentRequestIDs: Set<String> = []
 
@@ -589,7 +596,22 @@ class SocialService: ObservableObject {
             record["localWorkoutID"] = localWorkoutID
             record["createdAt"] = Date() as NSDate
 
-            _ = try await publicDB.save(record)
+            let savedRecord = try await publicDB.save(record)
+
+            // Upload full workout detail (image + intervals) if available
+            if let context = modelContext, let workoutUUID = UUID(uuidString: localWorkoutID) {
+                let descriptor = FetchDescriptor<Workout>(
+                    predicate: #Predicate { $0.id == workoutUUID }
+                )
+                if let workout = try? context.fetch(descriptor).first {
+                    do {
+                        try await publishWorkoutDetail(workout: workout, sharedWorkoutRecordID: savedRecord.recordID.recordName)
+                    } catch {
+                        print("⚠️ Failed to publish workout detail (non-fatal): \(error)")
+                        // Don't fail the overall publish if detail upload fails
+                    }
+                }
+            }
         } catch {
             print("⚠️ Failed to publish workout: \(error)")
         }
@@ -616,6 +638,137 @@ class SocialService: ObservableObject {
             // SharedWorkout type doesn't exist yet — nothing to delete
         } catch {
             print("⚠️ Failed to delete SharedWorkout (localWorkoutID=\(localWorkoutID)): \(error)")
+        }
+    }
+
+    // MARK: - Workout Detail (Full Data Sync)
+
+    /// Encode intervals array to JSON data for CloudKit storage
+    private func encodeIntervals(_ intervals: [Interval]) throws -> Data {
+        let intervalsArray = intervals.map { interval -> [String: Any] in
+            var dict: [String: Any] = [
+                "orderIndex": interval.orderIndex,
+                "time": interval.time,
+                "meters": interval.meters,
+                "splitPer500m": interval.splitPer500m,
+                "strokeRate": interval.strokeRate,
+                "timeConfidence": interval.timeConfidence,
+                "metersConfidence": interval.metersConfidence,
+                "splitConfidence": interval.splitConfidence,
+                "rateConfidence": interval.rateConfidence,
+                "heartRateConfidence": interval.heartRateConfidence
+            ]
+            if let heartRate = interval.heartRate {
+                dict["heartRate"] = heartRate
+            }
+            return dict
+        }
+        return try JSONSerialization.data(withJSONObject: intervalsArray, options: [])
+    }
+
+    /// Upload full workout detail (erg image + intervals) to CloudKit
+    func publishWorkoutDetail(workout: Workout, sharedWorkoutRecordID: String) async throws {
+        guard let userID = currentUserID else { return }
+
+        do {
+            // Check for existing WorkoutDetail by localWorkoutID (dedup)
+            var existingRecord: CKRecord? = nil
+            do {
+                let dedupPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, workout.id.uuidString)
+                let dedupQuery = CKQuery(recordType: "WorkoutDetail", predicate: dedupPredicate)
+                let (existing, _) = try await publicDB.records(matching: dedupQuery, resultsLimit: 1)
+                if let (_, result) = existing.first, case .success(let record) = result {
+                    existingRecord = record
+                }
+            } catch let error as CKError where error.code == .unknownItem {
+                print("ℹ️ WorkoutDetail type doesn't exist yet — will be created on first save")
+            }
+
+            let record = existingRecord ?? CKRecord(recordType: "WorkoutDetail")
+
+            record["localWorkoutID"] = workout.id.uuidString
+            record["ownerID"] = userID
+
+            // Set reference to SharedWorkout (for cascade delete and linking)
+            let sharedWorkoutID = CKRecord.ID(recordName: sharedWorkoutRecordID)
+            record["sharedWorkoutID"] = CKRecord.Reference(recordID: sharedWorkoutID, action: .deleteSelf)
+
+            // Upload erg image as CKAsset
+            if let imageData = workout.imageData {
+                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+                try imageData.write(to: tempURL)
+                let asset = CKAsset(fileURL: tempURL)
+                record["ergImage"] = asset
+                // Note: Temp file will be cleaned up automatically after upload
+            }
+
+            // Encode intervals as JSON string
+            if let intervals = workout.intervals, !intervals.isEmpty {
+                let intervalsData = try encodeIntervals(intervals)
+                let intervalsJSON = String(data: intervalsData, encoding: .utf8) ?? "[]"
+                record["intervalsJSON"] = intervalsJSON
+            } else {
+                record["intervalsJSON"] = "[]"
+            }
+
+            // Set confidence and edit flag
+            record["ocrConfidence"] = workout.ocrConfidence as NSNumber
+            record["wasManuallyEdited"] = (workout.wasManuallyEdited ? 1 : 0) as NSNumber
+            record["createdAt"] = Date() as NSDate
+
+            _ = try await publicDB.save(record)
+            print("✅ Published WorkoutDetail for workout \(workout.id.uuidString)")
+        } catch {
+            print("⚠️ Failed to publish workout detail: \(error)")
+            throw error
+        }
+    }
+
+    /// Fetch full workout detail from CloudKit for a friend's workout
+    func fetchWorkoutDetail(sharedWorkoutID: String) async -> WorkoutDetailResult? {
+        do {
+            // Query WorkoutDetail by reference to SharedWorkout
+            let sharedWorkoutRecordID = CKRecord.ID(recordName: sharedWorkoutID)
+            let reference = CKRecord.Reference(recordID: sharedWorkoutRecordID, action: .none)
+            let predicate = NSPredicate(format: "sharedWorkoutID == %@", reference)
+            let query = CKQuery(recordType: "WorkoutDetail", predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
+
+            guard let (_, result) = results.first, case .success(let record) = result else {
+                print("ℹ️ No WorkoutDetail found for SharedWorkout \(sharedWorkoutID)")
+                return nil
+            }
+
+            // Download erg image from CKAsset
+            var ergImageData: Data? = nil
+            if let asset = record["ergImage"] as? CKAsset, let fileURL = asset.fileURL {
+                ergImageData = try? Data(contentsOf: fileURL)
+            }
+
+            // Decode intervals JSON
+            var intervals: [[String: Any]] = []
+            if let intervalsJSON = record["intervalsJSON"] as? String,
+               let jsonData = intervalsJSON.data(using: .utf8) {
+                if let decoded = try? JSONSerialization.jsonObject(with: jsonData, options: []) as? [[String: Any]] {
+                    intervals = decoded
+                }
+            }
+
+            let ocrConfidence = record["ocrConfidence"] as? Double ?? 0.0
+            let wasManuallyEdited = (record["wasManuallyEdited"] as? Int ?? 0) == 1
+
+            return WorkoutDetailResult(
+                ergImageData: ergImageData,
+                intervals: intervals,
+                ocrConfidence: ocrConfidence,
+                wasManuallyEdited: wasManuallyEdited
+            )
+        } catch let error as CKError where error.code == .unknownItem {
+            print("ℹ️ WorkoutDetail type doesn't exist yet")
+            return nil
+        } catch {
+            print("⚠️ Failed to fetch workout detail: \(error)")
+            return nil
         }
     }
 

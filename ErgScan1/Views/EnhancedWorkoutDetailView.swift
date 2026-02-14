@@ -22,6 +22,7 @@ struct UnifiedWorkoutDetailView: View {
     @State private var isChupAnimating = false
     @State private var isBigChup = false
     @State private var newCommentText = ""
+    @State private var fetchedDetail: SocialService.WorkoutDetailResult?
 
     // Convenience init for own workout (from Log)
     init(localWorkout: Workout, currentUserID: String) {
@@ -57,6 +58,68 @@ struct UnifiedWorkoutDetailView: View {
         } else {
             return workout.workoutRecordID
         }
+    }
+
+    // MARK: - Friend Workout Data Processing
+
+    /// Process friend workout intervals into ViewModels
+    private var friendIntervalViewModels: [IntervalViewModel] {
+        guard let intervals = fetchedDetail?.intervals else { return [] }
+        return intervals.compactMap { IntervalViewModel(from: $0) }
+    }
+
+    /// Extract averages (orderIndex == 0) for summary
+    private var friendAveragesViewModel: IntervalViewModel? {
+        friendIntervalViewModels.first(where: { $0.orderIndex == 0 })
+    }
+
+    /// Extract actual intervals/splits (orderIndex >= 1)
+    private var friendSortedIntervals: [IntervalViewModel] {
+        friendIntervalViewModels
+            .filter { $0.orderIndex >= 1 }
+            .sorted(by: { $0.orderIndex < $1.orderIndex })
+    }
+
+    /// Determine workout category from workoutType string and interval pattern
+    private var friendWorkoutCategory: WorkoutCategory {
+        let type = workout.displayWorkoutType
+
+        // Regular interval workouts contain "x" and "/" (e.g., "3x4:00/3:00r")
+        if type.contains("x") && type.contains("/") {
+            return .interval
+        }
+
+        // Variable interval workouts contain "Variable" or have distinct interval distances
+        if type.lowercased().contains("variable") {
+            return .interval
+        }
+
+        // Check interval pattern: if distances are progressively increasing by same amount,
+        // it's a single piece with splits. Otherwise, it's intervals.
+        let distances = friendSortedIntervals.compactMap { Int($0.meters) }
+        if distances.count >= 2 {
+            // Check if intervals are evenly spaced (splits from continuous piece)
+            let spacings = zip(distances, distances.dropFirst()).map { $1 - $0 }
+            let firstSpacing = spacings.first ?? 0
+            let isEvenlySpaced = spacings.allSatisfy { abs($0 - firstSpacing) <= firstSpacing / 10 } // 10% tolerance
+
+            // Evenly spaced = single piece with splits
+            // Uneven spacing = interval workout
+            return isEvenlySpaced ? .single : .interval
+        }
+
+        // Default to single for distance/time based (e.g., "2000m", "20:00")
+        return .single
+    }
+
+    /// Find fastest interval for highlighting
+    private var friendFastestInterval: IntervalViewModel? {
+        friendSortedIntervals.min { parseTime($0.time) < parseTime($1.time) }
+    }
+
+    /// Find slowest interval for highlighting
+    private var friendSlowestInterval: IntervalViewModel? {
+        friendSortedIntervals.max { parseTime($0.time) < parseTime($1.time) }
     }
 
     // MARK: - Body
@@ -121,6 +184,10 @@ struct UnifiedWorkoutDetailView: View {
                     localWorkoutID: lw.id.uuidString
                 )
             }
+            // Fetch full workout detail for friend workouts
+            if !isOwnWorkout, !workout.workoutRecordID.isEmpty {
+                fetchedDetail = await socialService.fetchWorkoutDetail(sharedWorkoutID: workout.workoutRecordID)
+            }
             // Load social data
             if let wid = effectiveWorkoutRecordID {
                 chupInfo = await socialService.fetchChups(for: wid)
@@ -171,28 +238,38 @@ struct UnifiedWorkoutDetailView: View {
 
     @ViewBuilder
     private var savedImageView: some View {
+        // Show local image for own workouts
         if let imageData = localWorkout?.imageData,
            let uiImage = UIImage(data: imageData) {
-            Image(uiImage: uiImage)
-                .resizable()
-                .scaledToFit()
-                .frame(maxHeight: 200)
-                .cornerRadius(12)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                )
-                .onTapGesture { showImageViewer = true }
-                .overlay(alignment: .topTrailing) {
-                    Image(systemName: "arrow.up.left.and.arrow.down.right")
-                        .font(.caption)
-                        .padding(8)
-                        .background(Color.black.opacity(0.6))
-                        .foregroundColor(.white)
-                        .cornerRadius(8)
-                        .padding(8)
-                }
+            ergImageDisplay(uiImage)
         }
+        // Show fetched image for friend workouts
+        else if let imageData = fetchedDetail?.ergImageData,
+                let uiImage = UIImage(data: imageData) {
+            ergImageDisplay(uiImage)
+        }
+    }
+
+    private func ergImageDisplay(_ uiImage: UIImage) -> some View {
+        Image(uiImage: uiImage)
+            .resizable()
+            .scaledToFit()
+            .frame(maxHeight: 200)
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
+            )
+            .onTapGesture { showImageViewer = true }
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: "arrow.up.left.and.arrow.down.right")
+                    .font(.caption)
+                    .padding(8)
+                    .background(Color.black.opacity(0.6))
+                    .foregroundColor(.white)
+                    .cornerRadius(8)
+                    .padding(8)
+            }
     }
 
     // MARK: - Summary
@@ -200,9 +277,18 @@ struct UnifiedWorkoutDetailView: View {
     @ViewBuilder
     private var summarySection: some View {
         if let averages = averagesInterval, let lw = localWorkout {
+            // Own workout: use Interval directly
             AveragesSummaryCard(interval: averages, category: lw.category, date: lw.date, intensityZone: lw.zone)
+        } else if let friendAverages = friendAveragesViewModel {
+            // Friend workout: use IntervalViewModel from JSON
+            AveragesSummaryCard(
+                interval: friendAverages,
+                category: friendWorkoutCategory,
+                date: workout.displayDate,
+                intensityZone: workout.displayIntensityZone
+            )
         } else {
-            // Generic summary from WorkoutDisplayable
+            // Fallback: generic summary from WorkoutDisplayable
             displayableSummaryCard
         }
     }
@@ -333,6 +419,7 @@ struct UnifiedWorkoutDetailView: View {
 
     @ViewBuilder
     private var intervalsContent: some View {
+        // Show local intervals for own workouts
         if let lw = localWorkout {
             if lw.category == .interval && !sortedIntervals.isEmpty {
                 intervalCardsView
@@ -347,6 +434,21 @@ struct UnifiedWorkoutDetailView: View {
                 )
             }
         }
+        // Show friend intervals with same components
+        else if !friendSortedIntervals.isEmpty {
+            if friendWorkoutCategory == .interval {
+                friendIntervalCardsView
+                PageIndicator(currentPage: currentIntervalIndex, totalPages: friendSortedIntervals.count)
+                swipeHintView
+            } else {
+                SplitsListView(
+                    intervals: friendSortedIntervals,
+                    workoutType: workout.displayWorkoutType,
+                    fastestId: friendFastestInterval?.id,
+                    slowestId: friendSlowestInterval?.id
+                )
+            }
+        }
     }
 
     private var intervalCardsView: some View {
@@ -358,6 +460,27 @@ struct UnifiedWorkoutDetailView: View {
                     total: sortedIntervals.count,
                     isFastest: interval.id == fastestInterval?.id,
                     isSlowest: interval.id == slowestInterval?.id
+                )
+                .tag(index)
+            }
+        }
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .frame(height: 450)
+        .onChange(of: currentIntervalIndex) { _, _ in
+            HapticService.shared.lightImpact()
+        }
+    }
+
+    /// Swipeable interval cards for friend workouts
+    private var friendIntervalCardsView: some View {
+        TabView(selection: $currentIntervalIndex) {
+            ForEach(Array(friendSortedIntervals.enumerated()), id: \.element.id) { index, interval in
+                IntervalCardView(
+                    interval: interval,
+                    number: index + 1,
+                    total: friendSortedIntervals.count,
+                    isFastest: interval.id == friendFastestInterval?.id,
+                    isSlowest: interval.id == friendSlowestInterval?.id
                 )
                 .tag(index)
             }
@@ -436,8 +559,14 @@ struct UnifiedWorkoutDetailView: View {
 
     @ViewBuilder
     private var imageViewerSheet: some View {
+        // Show local image for own workouts
         if let imageData = localWorkout?.imageData,
            let uiImage = UIImage(data: imageData) {
+            FullScreenImageViewer(image: uiImage, workoutType: workout.displayWorkoutType)
+        }
+        // Show fetched image for friend workouts
+        else if let imageData = fetchedDetail?.ergImageData,
+                let uiImage = UIImage(data: imageData) {
             FullScreenImageViewer(image: uiImage, workoutType: workout.displayWorkoutType)
         }
     }
@@ -511,7 +640,7 @@ struct UnifiedWorkoutDetailView: View {
 // MARK: - Supporting Components
 
 struct AveragesSummaryCard: View {
-    let interval: Interval
+    let interval: any DisplayableInterval
     let category: WorkoutCategory?
     let date: Date
     let intensityZone: IntensityZone?
@@ -589,7 +718,7 @@ struct DataRow: View {
 }
 
 struct IntervalCardView: View {
-    let interval: Interval
+    let interval: any DisplayableInterval
     let number: Int
     let total: Int
     let isFastest: Bool
@@ -689,7 +818,7 @@ struct LargeDataField: View {
 }
 
 struct SplitsListView: View {
-    let intervals: [Interval]
+    let intervals: [any DisplayableInterval]
     let workoutType: String
     let fastestId: UUID?
     let slowestId: UUID?
@@ -782,7 +911,7 @@ struct SplitsListView: View {
 }
 
 struct SplitRow: View {
-    let interval: Interval
+    let interval: any DisplayableInterval
     let isDistanceBased: Bool
     let isFastest: Bool
     let isSlowest: Bool

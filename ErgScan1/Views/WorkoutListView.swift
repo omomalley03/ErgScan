@@ -47,6 +47,9 @@ struct WorkoutListView: View {
                     .padding(.bottom, 100)
                 }
                 .navigationTitle("Workouts")
+                .refreshable {
+                    // Triggers SwiftData @Query refresh
+                }
             }
         }
     }

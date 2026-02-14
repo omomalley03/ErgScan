@@ -215,6 +215,9 @@ struct DashboardView: View {
                 .task {
                     await socialService.loadFriendActivity()
                 }
+                .refreshable {
+                    await socialService.loadFriendActivity()
+                }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {
                         Button {
