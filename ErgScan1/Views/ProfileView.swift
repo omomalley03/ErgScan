@@ -68,6 +68,24 @@ struct ProfileView: View {
                     }
                     .padding(.horizontal)
 
+                    // Power Curve Link
+                    NavigationLink(destination: PowerCurveView()) {
+                        HStack {
+                            Image(systemName: "chart.xyaxis.line")
+                                .foregroundColor(.blue)
+                            Text("Power Curve")
+                                .font(.headline)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+
                     // Friends Link
                     NavigationLink(destination: FriendsListView()) {
                         HStack {
