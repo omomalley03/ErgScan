@@ -99,7 +99,8 @@ struct CommentsView: View {
                             .padding(.vertical, 40)
                         }
                     }
-                    .padding(.bottom, 80)
+                    .padding()
+                    .padding(.bottom, 80) // Extra padding to avoid being hidden by input bar
                 }
 
                 Divider()

@@ -130,6 +130,7 @@ struct UnifiedWorkoutDetailView: View {
                     commentsSection
                 }
             }
+            .padding()
             .padding(.bottom, 80)
         }
         .overlay {

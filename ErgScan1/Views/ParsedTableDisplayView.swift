@@ -137,7 +137,8 @@ struct ParsedTableDisplayView: View {
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
             }
-            .padding(.bottom, 80)
+            .padding()
+            .padding(.bottom, 80) // Extra padding to avoid being hidden by input bar
         }
         .frame(maxHeight: .infinity)
         .background(Color(.systemBackground))

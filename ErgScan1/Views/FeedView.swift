@@ -33,6 +33,7 @@ struct FeedView: View {
                         .foregroundColor(.secondary)
                         .padding(.top, 20)
                 }
+                .padding()
                 .padding(.bottom, 80)
             }
             .navigationTitle("Feed")
