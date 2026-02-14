@@ -41,17 +41,17 @@ struct MainTabView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-
-            // Custom tab bar overlay
-            CustomTabBar(
-                selectedTab: $selectedTab,
-                onCenterButtonTap: {
-                    withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
-                        showAddSheet = true
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                CustomTabBar(
+                    selectedTab: $selectedTab,
+                    onCenterButtonTap: {
+                        withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
+                            showAddSheet = true
+                        }
                     }
-                }
-            )
-            .environmentObject(themeViewModel)
+                )
+                .environmentObject(themeViewModel)
+            }
 
             // Add workout bottom sheet
             AddWorkoutSheet(

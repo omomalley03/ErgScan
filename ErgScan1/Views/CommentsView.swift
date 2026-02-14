@@ -100,6 +100,7 @@ struct CommentsView: View {
                         }
                     }
                     .padding()
+                    .padding(.bottom, 80) // Extra padding to avoid being hidden by input bar
                 }
 
                 Divider()

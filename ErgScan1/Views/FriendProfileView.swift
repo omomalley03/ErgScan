@@ -61,7 +61,7 @@ struct FriendProfileView: View {
                             ForEach(workouts) { workout in
                                 WorkoutFeedCard(
                                     workout: workout,
-                                    showProfileHeader: false,
+                                    showProfileHeader: true,
                                     currentUserID: myUserID
                                 )
                                 .contentShape(Rectangle())
@@ -82,6 +82,7 @@ struct FriendProfileView: View {
                     )
                 }
             }
+            .padding(.bottom, 80)   
         }
         .navigationTitle(username)
         .navigationBarTitleDisplayMode(.inline)

@@ -47,6 +47,11 @@ final class Workout {
         (intervals ?? [Interval]()).first(where: { $0.orderIndex == 0 })?.splitPer500m
     }
 
+    // Work time (excluding rest) from the averages interval (orderIndex == 0)
+    var workTime: String {
+        (intervals ?? []).first(where: { $0.orderIndex == 0 })?.time ?? totalTime
+    }
+
     // User relationship for CloudKit sync
     var user: User?
     var userID: String?                 // Denormalized for query performance

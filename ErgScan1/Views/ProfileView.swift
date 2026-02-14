@@ -106,6 +106,7 @@ struct ProfileView: View {
 
                     Spacer()
                 }
+                .padding(.bottom, 80)
             }
             .navigationTitle("Profile")
             .task {

@@ -31,6 +31,7 @@ struct ComparisonDetailView: View {
                 }
             }
             .padding()
+
         }
         .navigationTitle("Comparison")
         .navigationBarTitleDisplayMode(.inline)

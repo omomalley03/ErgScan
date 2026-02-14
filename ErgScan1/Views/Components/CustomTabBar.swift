@@ -13,31 +13,29 @@ struct CustomTabBar: View {
     @EnvironmentObject var themeViewModel: ThemeViewModel
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                // Dashboard
-                TabBarButton(tab: .dashboard, selectedTab: $selectedTab)
+        HStack(alignment: .bottom, spacing: 0) {
+            // Dashboard
+            TabBarButton(tab: .dashboard, selectedTab: $selectedTab)
 
-                // Log
-                TabBarButton(tab: .log, selectedTab: $selectedTab)
+            // Log
+            TabBarButton(tab: .log, selectedTab: $selectedTab)
 
-                // Center button (custom styled)
-                CenterAddButton(action: onCenterButtonTap)
-                    .padding(.horizontal, 20)
+            // Center button (custom styled)
+            CenterAddButton(action: onCenterButtonTap)
+                .padding(.horizontal, 8)
 
-                // Teams
-                TabBarButton(tab: .teams, selectedTab: $selectedTab)
+            // Teams
+            TabBarButton(tab: .teams, selectedTab: $selectedTab)
 
-                // Profile
-                TabBarButton(tab: .profile, selectedTab: $selectedTab)
-            }
-            .frame(height: 50)
-            .background(
-                Color(.systemBackground)
-                    .shadow(color: .black.opacity(0.1), radius: 5, y: -2)
-            )
+            // Profile
+            TabBarButton(tab: .profile, selectedTab: $selectedTab)
         }
-        .background(Color(.systemBackground))
+        .frame(height: 30)
+        .background {
+            Color(.systemBackground)
+                .shadow(color: .black.opacity(0.1), radius: 5, y: -2)
+                .ignoresSafeArea(edges: .bottom)
+        }
     }
 }
 
@@ -50,14 +48,10 @@ private struct TabBarButton: View {
             HapticService.shared.lightImpact()
             selectedTab = tab
         } label: {
-            VStack(spacing: 4) {
-                Image(systemName: selectedTab == tab ? tab.icon : tab.unselectedIcon)
-                    .font(.system(size: 24))
-                Text(tab.title)
-                    .font(.caption2)
-            }
-            .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
-            .frame(maxWidth: .infinity)
+            Image(systemName: selectedTab == tab ? tab.icon : tab.unselectedIcon)
+                .font(.system(size: 26))
+                .foregroundColor(selectedTab == tab ? .accentColor : .secondary)
+                .frame(maxWidth: .infinity)
         }
     }
 }
@@ -75,15 +69,14 @@ private struct CenterAddButton: View {
             ZStack {
                 Circle()
                     .fill(centerButtonBackgroundColor)
-                    .frame(width: 56, height: 56)
+                    .frame(width: 50, height: 50)
                     .shadow(color: .black.opacity(0.2), radius: 4, y: 2)
 
                 Image(systemName: "plus")
-                    .font(.system(size: 24, weight: .semibold))
+                    .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(centerButtonForegroundColor)
             }
         }
-        .offset(y: -10)
     }
 
     private var centerButtonBackgroundColor: Color {

@@ -34,6 +34,7 @@ struct FeedView: View {
                         .padding(.top, 20)
                 }
                 .padding()
+                .padding(.bottom, 80)
             }
             .navigationTitle("Feed")
             .toolbar {

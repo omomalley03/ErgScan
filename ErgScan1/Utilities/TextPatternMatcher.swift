@@ -25,10 +25,10 @@ struct TextPatternMatcher {
     static let splitPattern = #"^\d:\d{2}\.\d{1,2}$"#
 
     /// Meters format: "1179" or "5120" (3-5 digits)
-    static let metersPattern = #"^\d{3,5}$"#
+    static let metersPattern = #"^\d{2,5}$"#
 
     /// Stroke rate format: "29" or "32" (2 digits, validated 10-60)
-    static let ratePattern = #"^\d{2}$"#
+    static let ratePattern = #"^\d{1,2}$"#
 
     /// Date format: "Dec 20 2025" — relaxed to handle OCR artifacts
     static let datePattern = #"^[A-Za-z]{3}:?\s*\d{1,2}[\s.]+\d{4}$"#
@@ -260,7 +260,7 @@ struct TextPatternMatcher {
     func matchRate(_ text: String) -> Bool {
         guard matches(text, pattern: Self.ratePattern) else { return false }
         // Range validation: 10-60
-        guard let value = Int(text), value >= 10, value <= 60 else { return false }
+        guard let value = Int(text), value >= 5, value <= 80 else { return false }
         return true
     }
 

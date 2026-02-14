@@ -162,6 +162,8 @@ extension RecognizedTable {
     }
 
     private func checkIntervalCompleteness() -> CompletenessCheck {
+        print("🔍 Workout '\(workoutType ?? "unknown")' is Interval type, checking completeness via sum of interval meters")
+
         // Sum all interval meters
         let actualSum = rows.compactMap { row -> Int? in
             guard let metersText = row.meters?.text else { return nil }
@@ -178,36 +180,62 @@ extension RecognizedTable {
         let difference = abs(Double(actualSum) - Double(expected))
         let isComplete = difference <= tolerance
 
+        print("   ➜ Sum of intervals: \(actualSum)m, Expected: \(expected)m, Complete: \(isComplete)")
+
         let reason = isComplete ? nil : "Sum of intervals (\(actualSum)m) doesn't match total (\(expected)m)"
         return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: actualSum)
     }
 
     private func checkSingleCompleteness() -> CompletenessCheck {
-        guard let lastRow = rows.last else {
-            return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
-        }
+        // Determine if this is a distance-based or time-based single workout
+        // Distance-based workouts are ONLY a 3-5 digit number followed by "m" (e.g., "2000m", "5000m")
+        // This avoids confusion with variable interval workouts like "3000m / 2000m / 1000m"
+        let isDistanceBased: Bool = {
+            guard let type = workoutType else { return false }
+            // Check if it matches pattern: 3-5 digits followed by "m", nothing else
+            let pattern = "^\\d{3,5}m$"
+            return type.range(of: pattern, options: .regularExpression) != nil
+        }()
 
-        // Check distance-based completion
-        if let lastMeters = lastRow.meters?.text, let lastMetersInt = Int(lastMeters),
-           let expectedText = averages?.meters?.text, let expected = Int(expectedText) {
-            let tolerance = Double(expected) * 0.01
-            let difference = abs(Double(lastMetersInt) - Double(expected))
-            let isComplete = difference <= tolerance
+        if isDistanceBased {
+            print("🔍 Workout '\(workoutType ?? "unknown")' is Single Distance type, checking completeness via last split meter")
 
-            let reason = isComplete ? nil : "Last split (\(lastMetersInt)m) doesn't reach total (\(expected)m)"
-            return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: lastMetersInt)
-        }
+            // For distance-based singles (e.g., "2000m"), check last split meter
+            guard let lastRow = rows.last else {
+                return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)
+            }
 
-        // Check time-based completion
-        if let lastTime = lastRow.time?.text,
-           let totalTime = totalTime {
-            let lastSeconds = approximateSeconds(lastTime)
-            let totalSeconds = approximateSeconds(totalTime)
-            let difference = abs(lastSeconds - totalSeconds)
-            let isComplete = difference <= 10.0
+            if let lastMeters = lastRow.meters?.text, let lastMetersInt = Int(lastMeters),
+               let expectedText = averages?.meters?.text, let expected = Int(expectedText) {
+                let tolerance = Double(expected) * 0.01
+                let difference = abs(Double(lastMetersInt) - Double(expected))
+                let isComplete = difference <= tolerance
 
-            let reason = isComplete ? nil : "Last split time (\(lastTime)) doesn't reach total time (\(totalTime))"
-            return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: Int(totalSeconds), actualTotal: Int(lastSeconds))
+                print("   ➜ Last split: \(lastMetersInt)m, Expected: \(expected)m, Complete: \(isComplete)")
+
+                let reason = isComplete ? nil : "Last split (\(lastMetersInt)m) doesn't reach total (\(expected)m)"
+                return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: lastMetersInt)
+            }
+        } else {
+            // For time-based singles (e.g., "30:00") or anything else (including misclassified intervals), sum all split/interval meters
+            print("🔍 Workout '\(workoutType ?? "unknown")' is Single Time (or other) type, checking completeness via sum of split/interval meters")
+
+            let actualSum = rows.compactMap { row -> Int? in
+                guard let metersText = row.meters?.text else { return nil }
+                return Int(metersText)
+            }.reduce(0, +)
+
+            // Compare to averages row total
+            if let expectedText = averages?.meters?.text, let expected = Int(expectedText) {
+                let tolerance = Double(expected) * 0.01
+                let difference = abs(Double(actualSum) - Double(expected))
+                let isComplete = difference <= tolerance
+
+                print("   ➜ Sum of splits/intervals: \(actualSum)m, Expected: \(expected)m, Complete: \(isComplete)")
+
+                let reason = isComplete ? nil : "Sum of splits (\(actualSum)m) doesn't match total (\(expected)m)"
+                return CompletenessCheck(isComplete: isComplete, reason: reason, expectedTotal: expected, actualTotal: actualSum)
+            }
         }
 
         return CompletenessCheck(isComplete: true, reason: nil, expectedTotal: nil, actualTotal: nil)

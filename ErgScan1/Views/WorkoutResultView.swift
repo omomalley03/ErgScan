@@ -16,6 +16,7 @@ struct WorkoutResultView: View {
                     RepSplitListView(table: table)
                 }
                 .padding()
+                .padding(.bottom, 80)
             }
             .background(Color(.systemBackground))
         } else {
