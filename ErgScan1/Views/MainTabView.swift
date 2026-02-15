@@ -82,11 +82,7 @@ struct MainTabView: View {
             }
         }
         .sheet(isPresented: $showImagePicker) {
-            ImagePickerView { image in
-                // Handle selected image
-                // Future: Pass to ScannerViewModel for OCR processing
-                print("Selected image: \(image.size)")
-            }
+            ImageUploadScannerView()
         }
         .sheet(isPresented: $showSearch) {
             SearchView()
