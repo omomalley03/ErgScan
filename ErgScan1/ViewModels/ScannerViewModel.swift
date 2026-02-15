@@ -436,13 +436,12 @@ class ScannerViewModel: ObservableObject {
     func acceptIncompleteData() {
         guard case .incompletePrompt(let table, _) = state else { return }
 
-        // Proceed to locked state despite incomplete data
-        hapticService.triggerSuccess()
-        hasTriggeredHaptic = true
-        state = .locked(table)
+        // Send to manual edit so user can fill in missing data
+        shouldValidateOnLoad = true
+        state = .manualInput(table)
         previousScreenTable = nil
 
-        print("⚠️ User accepted incomplete data")
+        print("⚠️ User chose to manually edit incomplete data")
         print("   Rows: \(table.rows.count)")
     }
 

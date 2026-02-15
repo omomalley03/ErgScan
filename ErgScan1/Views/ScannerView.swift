@@ -187,7 +187,7 @@ struct ScannerView: View {
             // Progress indicator
             VStack(spacing: 12) {
                 HStack {
-                    Text("Scanning... (Capture \(viewModel.captureCount))")
+                    Text("Scanning...")// (Capture \(viewModel.captureCount))")
                         .font(.headline)
                         .foregroundColor(.secondary)
 
@@ -383,8 +383,8 @@ struct ScannerView: View {
                 viewModel.acceptIncompleteData()
             } label: {
                 HStack {
-                    Image(systemName: "checkmark.circle")
-                    Text("Accept Incomplete Data")
+                    Image(systemName: "pencil.circle")
+                    Text("Edit Manually")
                 }
                 .font(.subheadline)
                 .frame(maxWidth: .infinity)
