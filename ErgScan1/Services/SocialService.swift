@@ -76,10 +76,17 @@ class SocialService: ObservableObject {
     func setCurrentUser(_ appleUserID: String, context: ModelContext) {
         currentUserID = appleUserID
         modelContext = context
+
+        // Profile + status check in parallel (needed for UI)
         Task {
-            await checkCloudKitStatus()
-            await loadMyProfile()
-            // Publish any existing workouts that haven't been shared yet
+            async let statusCheck: Void = checkCloudKitStatus()
+            async let profileLoad: Void = loadMyProfile()
+            _ = await (statusCheck, profileLoad)
+        }
+
+        // Defer heavy workout sync — not needed immediately at startup
+        Task(priority: .background) {
+            try? await Task.sleep(nanoseconds: 5_000_000_000) // 5s delay
             await publishExistingWorkouts()
         }
     }

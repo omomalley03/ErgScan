@@ -13,6 +13,7 @@ final class CameraService: NSObject, ObservableObject {
 
     @Published var isAuthorized = false
     @Published var isSessionRunning = false
+    @Published private(set) var isConfigured = false
 
     // MARK: - Private Properties
 
@@ -54,12 +55,20 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
+    /// Check if camera permission is already granted (no prompt)
+    var isAlreadyAuthorized: Bool {
+        AVCaptureDevice.authorizationStatus(for: .video) == .authorized
+    }
+
     // MARK: - Camera Setup
 
     func setupCamera() async throws {
         guard isAuthorized else {
             throw CameraError.notAuthorized
         }
+
+        // Skip if already configured (pre-warmed)
+        guard !isConfigured else { return }
 
         captureSession.beginConfiguration()
 
@@ -115,6 +124,7 @@ final class CameraService: NSObject, ObservableObject {
         photoOutput = output
 
         captureSession.commitConfiguration()
+        isConfigured = true
     }
 
     // MARK: - Session Control

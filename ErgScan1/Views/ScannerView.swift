@@ -8,8 +8,15 @@ struct ScannerView: View {
     @Environment(\.currentUser) private var currentUser
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var socialService: SocialService
-    @StateObject private var viewModel = ScannerViewModel()
-    @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
+    @AppStorage("showDebugTabs") private var showDebugTabs = false
+
+    let cameraService: CameraService
+    @StateObject private var viewModel: ScannerViewModel
+
+    init(cameraService: CameraService) {
+        self.cameraService = cameraService
+        _viewModel = StateObject(wrappedValue: ScannerViewModel(cameraService: cameraService))
+    }
 
     var body: some View {
         Group {
@@ -402,6 +409,6 @@ struct ScannerView: View {
 }
 
 #Preview {
-    ScannerView()
+    ScannerView(cameraService: CameraService())
         .modelContainer(for: [Workout.self, Interval.self])
 }

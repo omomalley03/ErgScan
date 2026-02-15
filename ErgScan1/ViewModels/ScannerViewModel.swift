@@ -52,7 +52,7 @@ class ScannerViewModel: ObservableObject {
 
     // MARK: - Services
 
-    let cameraService = CameraService()
+    let cameraService: CameraService
     private let visionService = VisionService()
     private let tableParser = TableParserService()
     private let hapticService = HapticService.shared
@@ -69,9 +69,10 @@ class ScannerViewModel: ObservableObject {
     private var capturedOCRResultsForBenchmark: [(ocrResults: [GuideRelativeOCRResult], parsedTable: RecognizedTable, debugLog: String)] = []
 
     // Performance optimization: only compute debug info when needed
-    @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
+    @AppStorage("showDebugTabs") private var showDebugTabs = false
 
-    init() {
+    init(cameraService: CameraService) {
+        self.cameraService = cameraService
         // Forward cameraService changes so the view re-renders
         // when isSessionRunning changes
         cameraService.objectWillChange
@@ -85,15 +86,20 @@ class ScannerViewModel: ObservableObject {
 
     func setupCamera() async {
         do {
-            print("🎥 Setting up camera...")
-            let authorized = await cameraService.requestCameraPermission()
-            guard authorized else {
-                errorMessage = "Camera permission denied. Please enable in Settings."
-                return
-            }
+            // Skip permission + config if already pre-warmed
+            if !cameraService.isConfigured {
+                print("🎥 Setting up camera...")
+                let authorized = await cameraService.requestCameraPermission()
+                guard authorized else {
+                    errorMessage = "Camera permission denied. Please enable in Settings."
+                    return
+                }
 
-            try await cameraService.setupCamera()
-            print("📹 Camera setup complete")
+                try await cameraService.setupCamera()
+                print("📹 Camera setup complete")
+            } else {
+                print("⚡ Camera pre-warmed, starting session directly")
+            }
 
             // Start session with retry — camera hardware may still be releasing from a previous session
             for attempt in 1...3 {

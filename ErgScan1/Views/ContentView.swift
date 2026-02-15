@@ -4,10 +4,12 @@ import SwiftData
 /// Main content view with tab navigation
 struct ContentView: View {
 
+    @StateObject private var cameraService = CameraService()
+
     var body: some View {
         TabView {
             // Scanner tab
-            ScannerView()
+            ScannerView(cameraService: cameraService)
                 .tabItem {
                     Label("Scanner", systemImage: "camera.fill")
                 }

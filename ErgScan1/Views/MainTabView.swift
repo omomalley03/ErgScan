@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import AVFoundation
 
 struct MainTabView: View {
     @State private var selectedTab: TabItem = .dashboard
@@ -16,6 +17,7 @@ struct MainTabView: View {
     @State private var showGoals = false
     @State private var logHighlightDate: Date?
     @EnvironmentObject var themeViewModel: ThemeViewModel
+    @StateObject private var cameraService = CameraService()
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -76,7 +78,7 @@ struct MainTabView: View {
         .ignoresSafeArea(.keyboard)
         .sheet(isPresented: $showScanner) {
             NavigationStack {
-                ScannerView()
+                ScannerView(cameraService: cameraService)
             }
         }
         .sheet(isPresented: $showImagePicker) {
@@ -93,5 +95,17 @@ struct MainTabView: View {
             GoalsView()
         }
         .preferredColorScheme(themeViewModel.colorScheme)
+        .task {
+            // Pre-warm camera if permission already granted (no prompt)
+            if cameraService.isAlreadyAuthorized {
+                cameraService.isAuthorized = true
+                do {
+                    try await cameraService.setupCamera()
+                    print("⚡ Camera pre-warmed on app launch")
+                } catch {
+                    print("⚠️ Camera pre-warm failed: \(error)")
+                }
+            }
+        }
     }
 }
