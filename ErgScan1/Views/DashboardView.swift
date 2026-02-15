@@ -146,8 +146,10 @@ struct DashboardView: View {
 
             if socialService.friendActivity.isEmpty {
                 VStack(spacing: 12) {
-                    Image(systemName: "figure.rowing")
-                        .font(.system(size: 36))
+                    Image("figure.rowing")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 36, height: 36)
                         .foregroundColor(.secondary)
                     Text(socialService.friends.isEmpty ? "Add friends to see their activity" : "No recent activity")
                         .font(.subheadline)
@@ -624,9 +626,16 @@ struct RecentWorkoutWidget: View {
                         }
 
                         if let distance = workout.totalDistance {
-                            Label("\(distance)m", systemImage: "figure.rowing")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
+                            Label {
+                                Text("\(distance)m")
+                            } icon: {
+                                Image("figure.rowing")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .frame(width: 12, height: 12)
+                            }
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                         }
 
                         Text(workout.date, style: .date)

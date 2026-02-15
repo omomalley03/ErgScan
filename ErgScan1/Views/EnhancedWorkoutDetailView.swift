@@ -17,10 +17,12 @@ struct UnifiedWorkoutDetailView: View {
 
     // Social state
     @State private var resolvedWorkoutRecordID: String?
-    @State private var chupInfo = ChupInfo(count: 0, currentUserChupped: false)
+    @State private var chupInfo = ChupInfo(totalCount: 0, regularCount: 0, bigChupCount: 0, currentUserChupType: .none)
     @State private var comments: [CommentInfo] = []
     @State private var isChupAnimating = false
     @State private var isBigChup = false
+    @State private var isChupInProgress = false
+    @State private var showChupList = false
     @State private var newCommentText = ""
     @State private var fetchedDetail: SocialService.WorkoutDetailResult?
 
@@ -161,6 +163,13 @@ struct UnifiedWorkoutDetailView: View {
             if let lw = localWorkout {
                 NavigationStack {
                     EditWorkoutView(workout: lw)
+                }
+            }
+        }
+        .sheet(isPresented: $showChupList) {
+            if let wid = effectiveWorkoutRecordID {
+                NavigationStack {
+                    ChupListView(workoutID: wid)
                 }
             }
         }
@@ -343,42 +352,87 @@ struct UnifiedWorkoutDetailView: View {
             HStack {
                 // Chup button
                 Button {
-                    Task { await toggleChup() }
+                    guard !isChupInProgress else { return }
+                    isChupInProgress = true
+                    Task {
+                        defer { isChupInProgress = false }
+                        let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                        if let wid = effectiveWorkoutRecordID {
+                            do {
+                                let newType = try await socialService.toggleChup(
+                                    workoutID: wid,
+                                    userID: currentUserID,
+                                    username: myUsername,
+                                    isBigChup: false
+                                )
+                                // Refresh chup info from server
+                                chupInfo = await socialService.fetchChups(for: wid)
+                                if newType != .none {
+                                    HapticService.shared.chupFeedback()
+                                    withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
+                                }
+                            } catch {
+                                print("⚠️ Chup failed: \(error)")
+                            }
+                        }
+                    }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: chupInfo.currentUserChupped ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                        Image(systemName: chupInfo.currentUserChupType != .none ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .foregroundColor(
+                                chupInfo.currentUserChupType == .big ? .yellow :
+                                chupInfo.currentUserChupType == .regular ? .blue :
+                                .secondary
+                            )
                             .scaleEffect(isChupAnimating ? 1.3 : 1.0)
                         Text("Chup")
                             .font(.subheadline)
-                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                            .foregroundColor(
+                                chupInfo.currentUserChupType == .big ? .yellow :
+                                chupInfo.currentUserChupType == .regular ? .blue :
+                                .secondary
+                            )
                     }
                 }
                 .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 1.0)
+                    LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
+                            guard !isChupInProgress else { return }
+                            isChupInProgress = true
                             withAnimation(.spring(response: 0.5, dampingFraction: 0.5)) {
                                 isBigChup = true
                             }
                             HapticService.shared.bigChupFeedback()
-                            if !chupInfo.currentUserChupped {
-                                Task {
-                                    let myUsername = socialService.myProfile?["username"] as? String ?? ""
-                                    if let wid = effectiveWorkoutRecordID,
-                                       let result = try? await socialService.toggleChup(workoutID: wid, userID: currentUserID, username: myUsername),
-                                       result {
-                                        chupInfo.currentUserChupped = true
-                                        chupInfo.count += 1
+                            Task {
+                                defer { isChupInProgress = false }
+                                let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                if let wid = effectiveWorkoutRecordID {
+                                    do {
+                                        _ = try await socialService.toggleChup(
+                                            workoutID: wid,
+                                            userID: currentUserID,
+                                            username: myUsername,
+                                            isBigChup: true
+                                        )
+                                        // Refresh chup info from server
+                                        chupInfo = await socialService.fetchChups(for: wid)
+                                    } catch {
+                                        print("⚠️ Big chup failed: \(error)")
                                     }
                                 }
                             }
                         }
                 )
 
-                if chupInfo.count > 0 {
-                    Text(chupInfo.count == 1 ? "1 Chup" : "\(chupInfo.count) Chups")
+                if chupInfo.totalCount > 0 {
+                    Text(chupCountText)
                         .font(.caption)
                         .foregroundColor(.secondary)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            showChupList = true
+                        }
                 }
 
                 Spacer()
@@ -578,21 +632,17 @@ struct UnifiedWorkoutDetailView: View {
 
     // MARK: - Social Actions
 
-    private func toggleChup() async {
-        guard let wid = effectiveWorkoutRecordID else { return }
-        let myUsername = socialService.myProfile?["username"] as? String ?? ""
-        do {
-            let result = try await socialService.toggleChup(workoutID: wid, userID: currentUserID, username: myUsername)
-            chupInfo.currentUserChupped = result
-            chupInfo.count += result ? 1 : -1
-            if result {
-                HapticService.shared.chupFeedback()
-                withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
-            }
-        } catch {
-            print("⚠️ Chup failed: \(error)")
+    private var chupCountText: String {
+        if chupInfo.totalCount == 0 { return "" }
+
+        var parts: [String] = []
+        if chupInfo.regularCount > 0 {
+            parts.append("\(chupInfo.regularCount) Chup\(chupInfo.regularCount == 1 ? "" : "s")")
         }
+        if chupInfo.bigChupCount > 0 {
+            parts.append("\(chupInfo.bigChupCount) Big Chup\(chupInfo.bigChupCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " and ")
     }
 
     private func postComment() async {

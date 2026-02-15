@@ -60,12 +60,22 @@ private struct RoleSelectionCard: View {
     var body: some View {
         Button(action: onSelect) {
             HStack(spacing: 16) {
-                Image(systemName: role.icon)
-                    .font(.title2)
-                    .foregroundColor(isSelected ? .white : .blue)
-                    .frame(width: 50, height: 50)
-                    .background(isSelected ? Color.blue : Color.blue.opacity(0.1))
-                    .clipShape(Circle())
+                Group {
+                    if role.icon == "figure.rowing" {
+                        Image("figure.rowing")
+                            .resizable()
+                            .renderingMode(.template)
+                            .scaledToFit()
+                            .frame(width: 36, height: 36)
+                    } else {
+                        Image(systemName: role.icon)
+                            .font(.title2)
+                    }
+                }
+                .foregroundColor(isSelected ? .white : .blue)
+                .frame(width: 50, height: 50)
+                .background(isSelected ? Color.blue : Color.blue.opacity(0.1))
+                .clipShape(Circle())
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(role.displayName)

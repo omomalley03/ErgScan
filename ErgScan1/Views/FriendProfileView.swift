@@ -49,8 +49,10 @@ struct FriendProfileView: View {
                     // Full workout list
                     if workouts.isEmpty {
                         VStack(spacing: 12) {
-                            Image(systemName: "figure.rowing")
-                                .font(.system(size: 40))
+                            Image("figure.rowing")
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 40, height: 40)
                                 .foregroundColor(.secondary)
                             Text("No workouts shared yet")
                                 .font(.subheadline)

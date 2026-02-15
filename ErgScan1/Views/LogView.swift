@@ -12,6 +12,7 @@ struct LogView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var socialService: SocialService
+    @EnvironmentObject var teamService: TeamService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
     @Binding var highlightDate: Date?
@@ -78,7 +79,7 @@ struct LogView: View {
                         processHighlight(proxy: proxy)
                     }
                     .refreshable {
-                        // Triggers SwiftData @Query refresh
+                        await socialService.loadFriendActivity()
                     }
                 }
             }
@@ -142,7 +143,13 @@ struct LogView: View {
 
     private func deleteWorkout(_ workout: Workout) {
         let workoutIDString = workout.id.uuidString
-        Task { await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) }
+        Task {
+            if let deletedID = await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) {
+                await MainActor.run {
+                    teamService.removeFromTeamActivity(workoutID: deletedID)
+                }
+            }
+        }
         modelContext.delete(workout)
     }
 }

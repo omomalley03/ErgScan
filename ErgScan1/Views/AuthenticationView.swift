@@ -9,8 +9,10 @@ struct AuthenticationView: View {
             Spacer()
 
             // App branding
-            Image(systemName: "figure.rowing")
-                .font(.system(size: 80))
+            Image("figure.rowing")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 80, height: 80)
                 .foregroundColor(.blue)
 
             Text("ErgScan")

@@ -14,9 +14,10 @@ struct CommentsView: View {
 
     @State private var comments: [CommentInfo] = []
     @State private var newCommentText = ""
-    @State private var chupInfo = ChupInfo(count: 0, currentUserChupped: false)
+    @State private var chupInfo = ChupInfo(totalCount: 0, regularCount: 0, bigChupCount: 0, currentUserChupType: .none)
     @State private var isChupAnimating = false
     @State private var isBigChup = false
+    @State private var isChupInProgress = false
 
     var body: some View {
         NavigationStack {
@@ -46,20 +47,77 @@ struct CommentsView: View {
                     // Chup row
                     HStack {
                         Button {
-                            Task { await toggleChup() }
+                            guard !isChupInProgress else { return }
+                            isChupInProgress = true
+                            Task {
+                                defer { isChupInProgress = false }
+                                let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                do {
+                                    let newType = try await socialService.toggleChup(
+                                        workoutID: workoutID,
+                                        userID: currentUserID,
+                                        username: myUsername,
+                                        isBigChup: false
+                                    )
+                                    // Refresh chup info from server
+                                    chupInfo = await socialService.fetchChups(for: workoutID)
+                                    if newType != .none {
+                                        HapticService.shared.chupFeedback()
+                                        withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
+                                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
+                                    }
+                                } catch {
+                                    print("⚠️ Chup failed: \(error)")
+                                }
+                            }
                         } label: {
                             HStack(spacing: 4) {
-                                Image(systemName: chupInfo.currentUserChupped ? "hand.thumbsup.fill" : "hand.thumbsup")
-                                    .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                                Image(systemName: chupInfo.currentUserChupType != .none ? "hand.thumbsup.fill" : "hand.thumbsup")
+                                    .foregroundColor(
+                                        chupInfo.currentUserChupType == .big ? .yellow :
+                                        chupInfo.currentUserChupType == .regular ? .blue :
+                                        .secondary
+                                    )
                                     .scaleEffect(isChupAnimating ? 1.3 : 1.0)
                                 Text("Chup")
                                     .font(.subheadline)
-                                    .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                                    .foregroundColor(
+                                        chupInfo.currentUserChupType == .big ? .yellow :
+                                        chupInfo.currentUserChupType == .regular ? .blue :
+                                        .secondary
+                                    )
                             }
                         }
+                        .simultaneousGesture(
+                            LongPressGesture(minimumDuration: 0.5)
+                                .onEnded { _ in
+                                    guard !isChupInProgress else { return }
+                                    isChupInProgress = true
+                                    withAnimation(.spring(response: 0.5, dampingFraction: 0.5)) {
+                                        isBigChup = true
+                                    }
+                                    HapticService.shared.bigChupFeedback()
+                                    Task {
+                                        defer { isChupInProgress = false }
+                                        let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                        do {
+                                            _ = try await socialService.toggleChup(
+                                                workoutID: workoutID,
+                                                userID: currentUserID,
+                                                username: myUsername,
+                                                isBigChup: true
+                                            )
+                                            // Refresh chup info from server
+                                            chupInfo = await socialService.fetchChups(for: workoutID)
+                                        } catch {
+                                            print("⚠️ Big chup failed: \(error)")
+                                        }
+                                    }
+                                }
+                        )
 
-                        if chupInfo.count > 0 {
-                            Text(chupInfo.count == 1 ? "1 person gave a Chup" : "\(chupInfo.count) people gave a Chup")
+                        if chupInfo.totalCount > 0 {
+                            Text(chupCountText)
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -150,24 +208,17 @@ struct CommentsView: View {
         comments = await socialService.fetchComments(for: workoutID)
     }
 
-    private func toggleChup() async {
-        let myUsername = socialService.myProfile?["username"] as? String ?? ""
-        do {
-            let result = try await socialService.toggleChup(
-                workoutID: workoutID,
-                userID: currentUserID,
-                username: myUsername
-            )
-            chupInfo.currentUserChupped = result
-            chupInfo.count += result ? 1 : -1
-            if result {
-                HapticService.shared.chupFeedback()
-                withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
-            }
-        } catch {
-            print("⚠️ Chup failed: \(error)")
+    private var chupCountText: String {
+        if chupInfo.totalCount == 0 { return "" }
+
+        var parts: [String] = []
+        if chupInfo.regularCount > 0 {
+            parts.append("\(chupInfo.regularCount) Chup\(chupInfo.regularCount == 1 ? "" : "s")")
         }
+        if chupInfo.bigChupCount > 0 {
+            parts.append("\(chupInfo.bigChupCount) Big Chup\(chupInfo.bigChupCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " and ")
     }
 
     private func postComment() async {

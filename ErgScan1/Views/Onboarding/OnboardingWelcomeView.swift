@@ -7,8 +7,10 @@ struct OnboardingWelcomeView: View {
         VStack(spacing: 30) {
             Spacer()
 
-            Image(systemName: "figure.rowing")
-                .font(.system(size: 80))
+            Image("figure.rowing")
+                .resizable()
+                .scaledToFit()
+                .frame(width: 80, height: 80)
                 .foregroundColor(.blue)
 
             Text("Welcome to ErgScan")

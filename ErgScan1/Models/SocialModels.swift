@@ -2,9 +2,25 @@ import Foundation
 
 // MARK: - Chup (Like) Info
 
+enum ChupType {
+    case none
+    case regular
+    case big
+}
+
 struct ChupInfo {
-    var count: Int
-    var currentUserChupped: Bool
+    var totalCount: Int
+    var regularCount: Int
+    var bigChupCount: Int
+    var currentUserChupType: ChupType
+}
+
+struct ChupUser: Identifiable {
+    let id: String  // userID
+    let username: String
+    let displayName: String?
+    let isBigChup: Bool
+    let timestamp: Date
 }
 
 // MARK: - Comment Info

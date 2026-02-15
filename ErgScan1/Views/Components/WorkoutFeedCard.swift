@@ -8,12 +8,13 @@ struct WorkoutFeedCard: View {
 
     @EnvironmentObject var socialService: SocialService
 
-    @State private var chupInfo = ChupInfo(count: 0, currentUserChupped: false)
+    @State private var chupInfo = ChupInfo(totalCount: 0, regularCount: 0, bigChupCount: 0, currentUserChupType: .none)
     @State private var latestComment: CommentInfo? = nil
     @State private var commentCount: Int = 0
     @State private var showComments = false
     @State private var isChupAnimating = false
     @State private var isBigChup = false
+    @State private var isChupInProgress = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -76,17 +77,21 @@ struct WorkoutFeedCard: View {
             HStack {
                 // Chup button
                 Button {
+                    guard !isChupInProgress else { return }
+                    isChupInProgress = true
                     Task {
+                        defer { isChupInProgress = false }
                         let myUsername = socialService.myProfile?["username"] as? String ?? ""
                         do {
-                            let result = try await socialService.toggleChup(
+                            let newType = try await socialService.toggleChup(
                                 workoutID: workout.workoutRecordID,
                                 userID: currentUserID,
-                                username: myUsername
+                                username: myUsername,
+                                isBigChup: false
                             )
-                            chupInfo.currentUserChupped = result
-                            chupInfo.count += result ? 1 : -1
-                            if result {
+                            // Refresh chup info from server
+                            chupInfo = await socialService.fetchChups(for: workout.workoutRecordID)
+                            if newType != .none {
                                 HapticService.shared.chupFeedback()
                                 withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
                                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
@@ -97,41 +102,52 @@ struct WorkoutFeedCard: View {
                     }
                 } label: {
                     HStack(spacing: 4) {
-                        Image(systemName: chupInfo.currentUserChupped ? "hand.thumbsup.fill" : "hand.thumbsup")
-                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                        Image(systemName: chupInfo.currentUserChupType != .none ? "hand.thumbsup.fill" : "hand.thumbsup")
+                            .foregroundColor(
+                                chupInfo.currentUserChupType == .big ? .yellow :
+                                chupInfo.currentUserChupType == .regular ? .blue :
+                                .secondary
+                            )
                             .scaleEffect(isChupAnimating ? 1.3 : 1.0)
                         Text("Chup")
                             .font(.subheadline)
-                            .foregroundColor(chupInfo.currentUserChupped ? .blue : .secondary)
+                            .foregroundColor(
+                                chupInfo.currentUserChupType == .big ? .yellow :
+                                chupInfo.currentUserChupType == .regular ? .blue :
+                                .secondary
+                            )
                     }
                 }
                 .simultaneousGesture(
-                    LongPressGesture(minimumDuration: 1.0)
+                    LongPressGesture(minimumDuration: 0.5)
                         .onEnded { _ in
+                            guard !isChupInProgress else { return }
+                            isChupInProgress = true
                             withAnimation(.spring(response: 0.5, dampingFraction: 0.5)) {
                                 isBigChup = true
                             }
                             HapticService.shared.bigChupFeedback()
-                            // Also toggle chup if not already chupped
-                            if !chupInfo.currentUserChupped {
-                                Task {
-                                    let myUsername = socialService.myProfile?["username"] as? String ?? ""
-                                    let result = try? await socialService.toggleChup(
+                            Task {
+                                defer { isChupInProgress = false }
+                                let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                do {
+                                    _ = try await socialService.toggleChup(
                                         workoutID: workout.workoutRecordID,
                                         userID: currentUserID,
-                                        username: myUsername
+                                        username: myUsername,
+                                        isBigChup: true
                                     )
-                                    if let result, result {
-                                        chupInfo.currentUserChupped = true
-                                        chupInfo.count += 1
-                                    }
+                                    // Refresh chup info from server
+                                    chupInfo = await socialService.fetchChups(for: workout.workoutRecordID)
+                                } catch {
+                                    print("⚠️ Big chup failed: \(error)")
                                 }
                             }
                         }
                 )
 
-                if chupInfo.count > 0 {
-                    Text(chupInfo.count == 1 ? "1 Chup" : "\(chupInfo.count) Chups")
+                if chupInfo.totalCount > 0 {
+                    Text(chupCountText)
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -236,6 +252,21 @@ struct WorkoutFeedCard: View {
                 .fontWeight(.semibold)
                 .monospacedDigit()
         }
+    }
+
+    // MARK: - Helpers
+
+    private var chupCountText: String {
+        if chupInfo.totalCount == 0 { return "" }
+
+        var parts: [String] = []
+        if chupInfo.regularCount > 0 {
+            parts.append("\(chupInfo.regularCount) Chup\(chupInfo.regularCount == 1 ? "" : "s")")
+        }
+        if chupInfo.bigChupCount > 0 {
+            parts.append("\(chupInfo.bigChupCount) Big Chup\(chupInfo.bigChupCount == 1 ? "" : "s")")
+        }
+        return parts.joined(separator: " and ")
     }
 
     // MARK: - Data Loading

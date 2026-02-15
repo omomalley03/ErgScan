@@ -7,6 +7,7 @@ struct WorkoutListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var socialService: SocialService
+    @EnvironmentObject var teamService: TeamService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
 
     // Filter workouts by current user
@@ -79,7 +80,13 @@ struct WorkoutListView: View {
 
     private func deleteWorkout(_ workout: Workout) {
         let workoutIDString = workout.id.uuidString
-        Task { await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) }
+        Task {
+            if let deletedID = await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) {
+                await MainActor.run {
+                    teamService.removeFromTeamActivity(workoutID: deletedID)
+                }
+            }
+        }
         modelContext.delete(workout)
     }
 }

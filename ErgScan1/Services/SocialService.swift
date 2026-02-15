@@ -690,11 +690,13 @@ class SocialService: ObservableObject {
         }
     }
 
-    func deleteSharedWorkout(localWorkoutID: String) async {
+    @discardableResult
+    func deleteSharedWorkout(localWorkoutID: String) async -> String? {
         guard let userID = currentUserID else {
             print("⚠️ deleteSharedWorkout: no currentUserID")
-            return
+            return nil
         }
+        var deletedRecordName: String?
         do {
             let predicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
             let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
@@ -705,12 +707,39 @@ class SocialService: ObservableObject {
             for (recordID, result) in results {
                 guard case .success(_) = result else { continue }
                 try await publicDB.deleteRecord(withID: recordID)
+                deletedRecordName = recordID.recordName
                 print("✅ Deleted SharedWorkout record: \(recordID.recordName)")
+
+                // Remove from local friendActivity cache
+                friendActivity.removeAll { $0.id == recordID.recordName }
+
+                // Delete orphaned chups
+                await deleteAssociatedRecords(type: "WorkoutChup", workoutID: recordID.recordName)
+                // Delete orphaned comments
+                await deleteAssociatedRecords(type: "WorkoutComment", workoutID: recordID.recordName)
             }
         } catch let error as CKError where error.code == .unknownItem {
             // SharedWorkout type doesn't exist yet — nothing to delete
         } catch {
             print("⚠️ Failed to delete SharedWorkout (localWorkoutID=\(localWorkoutID)): \(error)")
+        }
+        return deletedRecordName
+    }
+
+    /// Delete all CloudKit records of a given type that reference a workoutID
+    private func deleteAssociatedRecords(type: String, workoutID: String) async {
+        do {
+            let predicate = NSPredicate(format: "workoutID == %@", workoutID)
+            let query = CKQuery(recordType: type, predicate: predicate)
+            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
+            for (recordID, _) in results {
+                try? await publicDB.deleteRecord(withID: recordID)
+            }
+            if !results.isEmpty {
+                print("✅ Deleted \(results.count) \(type) records for workout \(workoutID)")
+            }
+        } catch {
+            print("⚠️ Failed to delete \(type) records for workout \(workoutID): \(error)")
         }
     }
 
@@ -969,31 +998,38 @@ class SocialService: ObservableObject {
 
     // MARK: - Chups
 
-    func toggleChup(workoutID: String, userID: String, username: String) async throws -> Bool {
+    func toggleChup(workoutID: String, userID: String, username: String, isBigChup: Bool = false) async throws -> ChupType {
         // Check if user already chupped
         do {
             let predicate = NSPredicate(format: "workoutID == %@ AND userID == %@", workoutID, userID)
             let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
 
-            if let (recordID, result) = results.first, case .success(_) = result {
-                // Already chupped — remove it
+            if let (recordID, result) = results.first, case .success(let existingRecord) = result {
+                // Already chupped — delete the existing chup first
                 try await publicDB.deleteRecord(withID: recordID)
-                return false
+
+                // If this is a big chup request, create a new one (allows upgrading/downgrading)
+                // If it's a regular tap, just remove it (toggle off)
+                if !isBigChup {
+                    return .none
+                }
+                // Fall through to create big chup below
             }
         } catch let error as CKError where error.code == .unknownItem {
             // Record type doesn't exist yet — will be created on first save
         }
 
-        // Not chupped yet — create chup
+        // Create chup (either new or upgrade)
         do {
             let record = CKRecord(recordType: "WorkoutChup")
             record["workoutID"] = workoutID
             record["userID"] = userID
             record["username"] = username
             record["timestamp"] = Date() as NSDate
+            record["isBigChup"] = (isBigChup ? 1 : 0) as NSNumber
             _ = try await publicDB.save(record)
-            return true
+            return isBigChup ? .big : .regular
         } catch let error as CKError where error.code == .permissionFailure {
             print("⚠️ Chup permission failure — record type may not exist in CloudKit schema. Run from Xcode first to auto-create, then deploy schema to Production.")
             errorMessage = "Chups not available yet. Please run the app from Xcode to initialize CloudKit schema."
@@ -1003,37 +1039,96 @@ class SocialService: ObservableObject {
 
     func fetchChups(for workoutID: String) async -> ChupInfo {
         guard let userID = currentUserID else {
-            return ChupInfo(count: 0, currentUserChupped: false)
+            return ChupInfo(totalCount: 0, regularCount: 0, bigChupCount: 0, currentUserChupType: .none)
         }
         do {
             let predicate = NSPredicate(format: "workoutID == %@", workoutID)
             let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
 
-            var count = 0
-            var currentUserChupped = false
+            var regularCount = 0
+            var bigChupCount = 0
+            var currentUserChupType: ChupType = .none
+
             for (_, result) in results {
                 guard case .success(let record) = result else { continue }
-                count += 1
+
+                // Parse isBigChup field (default to 0/false for old records without this field)
+                let isBigChup = (record["isBigChup"] as? NSNumber)?.intValue == 1
+
+                if isBigChup {
+                    bigChupCount += 1
+                } else {
+                    regularCount += 1
+                }
+
+                // Check if this is the current user's chup
                 if let chupUserID = record["userID"] as? String, chupUserID == userID {
-                    currentUserChupped = true
+                    currentUserChupType = isBigChup ? .big : .regular
                 }
             }
-            return ChupInfo(count: count, currentUserChupped: currentUserChupped)
+
+            return ChupInfo(
+                totalCount: regularCount + bigChupCount,
+                regularCount: regularCount,
+                bigChupCount: bigChupCount,
+                currentUserChupType: currentUserChupType
+            )
         } catch {
-            return ChupInfo(count: 0, currentUserChupped: false)
+            return ChupInfo(totalCount: 0, regularCount: 0, bigChupCount: 0, currentUserChupType: .none)
         }
     }
 
-    func fetchChupUsers(for workoutID: String) async -> [String] {
+    func fetchChupUsers(for workoutID: String) async -> [ChupUser] {
         do {
             let predicate = NSPredicate(format: "workoutID == %@", workoutID)
             let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
 
-            return results.compactMap { _, result in
-                guard case .success(let record) = result else { return nil }
-                return record["username"] as? String
+            var chupUsers: [ChupUser] = []
+            for (_, result) in results {
+                guard case .success(let record) = result else { continue }
+
+                guard let userID = record["userID"] as? String,
+                      let username = record["username"] as? String,
+                      let timestamp = record["timestamp"] as? Date else {
+                    continue
+                }
+
+                let isBigChup = (record["isBigChup"] as? NSNumber)?.intValue == 1
+
+                // Try to fetch display name from user profile (optional)
+                var displayName: String?
+                do {
+                    let profilePredicate = NSPredicate(format: "userID == %@", userID)
+                    let profileQuery = CKQuery(recordType: "UserProfile", predicate: profilePredicate)
+                    let (profileResults, _) = try await publicDB.records(matching: profileQuery, resultsLimit: 1)
+                    if let (_, profileResult) = profileResults.first,
+                       case .success(let profileRecord) = profileResult {
+                        displayName = profileRecord["displayName"] as? String
+                    }
+                } catch {
+                    // Couldn't fetch display name, that's okay
+                }
+
+                chupUsers.append(ChupUser(
+                    id: userID,
+                    username: username,
+                    displayName: displayName,
+                    isBigChup: isBigChup,
+                    timestamp: timestamp
+                ))
+            }
+
+            // Sort: big chups first (by timestamp desc), then regular chups (by timestamp desc)
+            return chupUsers.sorted { lhs, rhs in
+                if lhs.isBigChup && !rhs.isBigChup {
+                    return true
+                } else if !lhs.isBigChup && rhs.isBigChup {
+                    return false
+                } else {
+                    return lhs.timestamp > rhs.timestamp
+                }
             }
         } catch {
             return []

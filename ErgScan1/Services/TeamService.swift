@@ -454,6 +454,12 @@ class TeamService: ObservableObject {
         }
     }
 
+    // MARK: - Cache Management
+
+    func removeFromTeamActivity(workoutID: String) {
+        teamActivity.removeAll { $0.id == workoutID }
+    }
+
     // MARK: - Admin Check
 
     func isAdmin(teamID: String) -> Bool {
