@@ -10,6 +10,7 @@ enum ScanningState: Equatable {
     case ready          // Ready to start scanning
     case capturing      // Actively capturing and processing
     case incompletePrompt(RecognizedTable, firstScan: Bool)  // Data meets locking criteria but is incomplete
+    case manualInput(RecognizedTable?)  // Fallback to manual input after 6 failed scans
     case locked(RecognizedTable)
     case saved
 
@@ -19,6 +20,8 @@ enum ScanningState: Equatable {
             return true
         case (.incompletePrompt(let lTable, let lFirst), .incompletePrompt(let rTable, let rFirst)):
             return lTable.stableHash == rTable.stableHash && lFirst == rFirst
+        case (.manualInput(let lTable), .manualInput(let rTable)):
+            return lTable?.stableHash == rTable?.stableHash
         case (.locked(let lTable), .locked(let rTable)):
             return lTable.stableHash == rTable.stableHash
         default:
@@ -38,6 +41,7 @@ class ScannerViewModel: ObservableObject {
     @Published var currentTable: RecognizedTable?
     @Published var errorMessage: String?
     @Published var captureCount: Int = 0
+    @Published var shouldValidateOnLoad: Bool = false  // Auto-validate in ManualDataEntryView when scan fails validation
 
     // User for linking workouts to accounts
     @Published var currentUser: User?
@@ -116,7 +120,7 @@ class ScannerViewModel: ObservableObject {
 
         print("🚀 Starting iterative scanning...")
 
-        // Iteratively capture until complete (no limit on attempts)
+        // Iteratively capture until complete or hit 6-scan fallback
         while state == .capturing {
             captureCount += 1
             print("📸 Capture attempt \(captureCount)")
@@ -126,6 +130,14 @@ class ScannerViewModel: ObservableObject {
             // Check if we should stop
             if case .locked = state {
                 print("🔒 Locked with complete data")
+                break
+            }
+
+            // Fallback: after 4 scans without locking, offer manual input
+            if captureCount >= 4 {
+                print("⚠️ Reached 4 scans without locking - triggering manual input fallback")
+                shouldValidateOnLoad = false  // Don't auto-validate for 4-scan fallback
+                state = .manualInput(accumulatedTable)
                 break
             }
 
@@ -248,12 +260,20 @@ class ScannerViewModel: ObservableObject {
         let isFirstScan = previousScreenTable == nil
 
         if completenessCheck.isComplete {
-            // Data is complete — proceed to locked state
-            hapticService.triggerSuccess()
-            hasTriggeredHaptic = true
-            state = .locked(finalTable)
-            previousScreenTable = nil
-            print("✅ Workout locked with complete data! (\(finalTable.rows.count) rows)")
+            // Run validation checks (split accuracy + consistency)
+            if validateScanData(finalTable) {
+                // All checks pass — lock normally
+                hapticService.triggerSuccess()
+                hasTriggeredHaptic = true
+                state = .locked(finalTable)
+                previousScreenTable = nil
+                print("✅ Workout locked with complete data! (\(finalTable.rows.count) rows)")
+            } else {
+                // Validation failed — send to manual input for correction
+                print("⚠️ Scan data has validation errors, redirecting to manual input")
+                shouldValidateOnLoad = true
+                state = .manualInput(finalTable)  // pre-populated with scanned data
+            }
         } else {
             // Data meets locking criteria but is incomplete
             state = .incompletePrompt(finalTable, firstScan: isFirstScan)
@@ -262,6 +282,90 @@ class ScannerViewModel: ObservableObject {
                 print("   Reason: \(reason)")
             }
         }
+    }
+
+    // MARK: - Scan Data Validation
+
+    /// Validate scanned data for split accuracy and consistency
+    /// Returns true if all checks pass, false if there are validation errors
+    private func validateScanData(_ table: RecognizedTable) -> Bool {
+        // Determine workout sub-type
+        let isInterval = table.category == .interval
+        let isDistanceBased = !isInterval &&
+            (table.workoutType?.range(of: "^\\d{3,5}m$", options: .regularExpression) != nil)
+
+        // 1. Split accuracy check
+        for i in 0..<table.rows.count {
+            let row = table.rows[i]
+            guard let timeStr = row.time?.text,
+                  let metersStr = row.meters?.text,
+                  let splitStr = row.splitPer500m?.text,
+                  let time = PowerCurveService.timeStringToSeconds(timeStr),
+                  let actualSplit = PowerCurveService.timeStringToSeconds(splitStr) else { continue }
+            let meters = Double(metersStr.replacingOccurrences(of: ",", with: "")) ?? 0
+            guard meters > 0, time > 0 else { continue }
+
+            var expectedSplit: Double
+            if isInterval {
+                expectedSplit = (time / meters) * 500.0
+            } else if isDistanceBased {
+                let prevMeters: Double = i > 0
+                    ? (Double((table.rows[i-1].meters?.text ?? "0").replacingOccurrences(of: ",", with: "")) ?? 0)
+                    : 0
+                let effective = meters - prevMeters
+                guard effective > 0 else { continue }
+                expectedSplit = (time / effective) * 500.0
+            } else {
+                // Single time: cumulative time, per-split meters
+                let prevTime: Double = i > 0
+                    ? (PowerCurveService.timeStringToSeconds(table.rows[i-1].time?.text ?? "") ?? 0)
+                    : 0
+                let effective = time - prevTime
+                guard effective > 0 else { continue }
+                expectedSplit = (effective / meters) * 500.0
+            }
+
+            let floored = floor(expectedSplit * 10.0) / 10.0
+            if abs(floored - actualSplit) > 0.1 {
+                print("⚠️ Split accuracy error at row \(i): expected \(floored), actual \(actualSplit)")
+                return false  // Split mismatch
+            }
+        }
+
+        // 2. Split consistency check (single workouts only)
+        if !isInterval && table.rows.count >= 2 {
+            let parseM = { (text: String?) -> Double? in
+                guard let t = text else { return nil }
+                return Double(t.replacingOccurrences(of: ",", with: ""))
+            }
+            if isDistanceBased {
+                // Single Distance: check meter gaps (cumulative meters)
+                guard let firstMeters = parseM(table.rows[0].meters?.text), firstMeters > 0 else { return true }
+                for i in 1..<(table.rows.count - 1) {
+                    guard let current = parseM(table.rows[i].meters?.text),
+                          let prev = parseM(table.rows[i-1].meters?.text) else { continue }
+                    if abs((current - prev) - firstMeters) > 1 {
+                        print("⚠️ Split consistency error at row \(i): gap \(current - prev) ≠ expected \(firstMeters)")
+                        return false
+                    }
+                }
+            } else {
+                // Single Time: check time gaps (cumulative time)
+                guard let firstTime = PowerCurveService.timeStringToSeconds(table.rows[0].time?.text ?? ""),
+                      firstTime > 0 else { return true }
+                for i in 1..<(table.rows.count - 1) {
+                    guard let current = PowerCurveService.timeStringToSeconds(table.rows[i].time?.text ?? ""),
+                          let prev = PowerCurveService.timeStringToSeconds(table.rows[i-1].time?.text ?? "") else { continue }
+                    if abs((current - prev) - firstTime) > 1 {
+                        print("⚠️ Split consistency error at row \(i): time gap \(current - prev) ≠ expected \(firstTime)")
+                        return false
+                    }
+                }
+            }
+        }
+
+        // 3. Meters completeness (already checked by checkDataCompleteness — skip)
+        return true
     }
 
     // MARK: - Multi-Screen Scanning

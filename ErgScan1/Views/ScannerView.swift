@@ -12,88 +12,48 @@ struct ScannerView: View {
     @AppStorage("showDebugTabs") private var showDebugTabs = true  // Temporarily enabled for debugging
 
     var body: some View {
-        VStack(spacing: 0) {
-            // ---- TOP HALF: Camera preview OR incomplete prompt table preview ----
-            if case .incompletePrompt(let table, _) = viewModel.state {
-                // Show table preview in top half for incomplete prompt
-                incompletePromptTablePreview(table: table)
-                    .frame(maxHeight: .infinity)
-            } else {
-                // Normal camera preview with overlays
-                ZStack {
-                    if viewModel.cameraService.isSessionRunning {
-                        CameraPreviewView(previewLayer: viewModel.cameraService.previewLayer)
-                    } else {
-                        Color.black
+        Group {
+            if case .manualInput(let partialTable) = viewModel.state {
+                // Full-screen manual data entry
+                ManualDataEntryView(
+                    initialTable: partialTable,
+                    validateOnLoad: viewModel.shouldValidateOnLoad,
+                    onComplete: { table in
+                        viewModel.state = .locked(table)
+                    },
+                    onCancel: {
+                        viewModel.retake()
                     }
-
-                    // State-based overlays
-                    switch viewModel.state {
-                    case .ready, .capturing:
-                        // Square positioning guide during ready and capturing
-                        PositioningGuideView()
-
-                    case .locked:
-                        // Green checkmark overlay when locked
-                        LockedGuideOverlay()
-
-                    case .saved:
-                        // No overlay for saved state
-                        EmptyView()
-
-                    default:
-                        EmptyView()
-                    }
-                }
-                .frame(maxHeight: .infinity)
-                .clipped()
-            }
-
-            // ---- BOTTOM HALF: State-based content ----
-            VStack(spacing: 0) {
-                switch viewModel.state {
-                case .ready:
-                    readyContent
-
-                case .capturing:
-                    capturingContent
-
-                case .incompletePrompt(let table, let firstScan):
-                    incompletePromptButtons(table: table, isFirstScan: firstScan)
-
-                case .locked(let table):
-                    EditableWorkoutForm(
-                        table: table,
-                        onSave: { editedDate, selectedZone, isErgTest in
-                            Task {
-                                if let savedWorkout = await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest) {
-                                    // Publish to friends if user has a username
-                                    if let username = currentUser?.username, !username.isEmpty {
-                                        await socialService.publishWorkout(
-                                            workoutType: savedWorkout.workoutType,
-                                            date: savedWorkout.date,
-                                            totalTime: savedWorkout.totalTime,
-                                            totalDistance: savedWorkout.totalDistance ?? 0,
-                                            averageSplit: savedWorkout.averageSplit ?? "",
-                                            intensityZone: savedWorkout.intensityZone ?? "",
-                                            isErgTest: savedWorkout.isErgTest,
-                                            localWorkoutID: savedWorkout.id.uuidString
-                                        )
-                                    }
+                )
+            } else if case .locked(let table) = viewModel.state {
+                // Full-screen data review (no camera)
+                EditableWorkoutForm(
+                    table: table,
+                    onSave: { editedDate, selectedZone, isErgTest in
+                        Task {
+                            if let savedWorkout = await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest) {
+                                if let username = currentUser?.username, !username.isEmpty {
+                                    await socialService.publishWorkout(
+                                        workoutType: savedWorkout.workoutType,
+                                        date: savedWorkout.date,
+                                        totalTime: savedWorkout.totalTime,
+                                        totalDistance: savedWorkout.totalDistance ?? 0,
+                                        averageSplit: savedWorkout.averageSplit ?? "",
+                                        intensityZone: savedWorkout.intensityZone ?? "",
+                                        isErgTest: savedWorkout.isErgTest,
+                                        localWorkoutID: savedWorkout.id.uuidString
+                                    )
                                 }
                             }
-                        },
-                        onRetake: {
-                            viewModel.retake()
                         }
-                    )
-
-                case .saved:
-                    savedContent
-                }
+                    },
+                    onRetake: {
+                        viewModel.retake()
+                    }
+                )
+            } else {
+                mainScannerLayout
             }
-            .frame(maxHeight: .infinity)
-            .background(Color(.systemBackground))
         }
         .task {
             await viewModel.setupCamera()
@@ -118,6 +78,58 @@ struct ScannerView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+    }
+
+    // MARK: - Main Scanner Layout
+
+    @ViewBuilder
+    private var mainScannerLayout: some View {
+        VStack(spacing: 0) {
+            // ---- TOP HALF: Camera preview OR incomplete prompt table preview ----
+            if case .incompletePrompt(let table, _) = viewModel.state {
+                incompletePromptTablePreview(table: table)
+                    .frame(maxHeight: .infinity)
+            } else {
+                ZStack {
+                    if viewModel.cameraService.isSessionRunning {
+                        CameraPreviewView(previewLayer: viewModel.cameraService.previewLayer)
+                    } else {
+                        Color.black
+                    }
+
+                    switch viewModel.state {
+                    case .ready, .capturing:
+                        PositioningGuideView()
+                    case .locked:
+                        LockedGuideOverlay()
+                    default:
+                        EmptyView()
+                    }
+                }
+                .frame(maxHeight: .infinity)
+                .clipped()
+            }
+
+            // ---- BOTTOM HALF: State-based content ----
+            VStack(spacing: 0) {
+                switch viewModel.state {
+                case .ready:
+                    readyContent
+                case .capturing:
+                    capturingContent
+                case .incompletePrompt(let table, let firstScan):
+                    incompletePromptButtons(table: table, isFirstScan: firstScan)
+                case .locked:
+                    EmptyView() // Handled by full-screen EditableWorkoutForm above
+                case .saved:
+                    savedContent
+                case .manualInput:
+                    EmptyView() // Handled by full-screen ManualDataEntryView
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .background(Color(.systemBackground))
         }
     }
 
@@ -386,6 +398,7 @@ struct ScannerView: View {
         }
         return "Data may be incomplete. Scroll down on the monitor to see more splits."
     }
+
 }
 
 #Preview {

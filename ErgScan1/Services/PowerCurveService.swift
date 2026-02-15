@@ -32,15 +32,22 @@ class PowerCurveService {
         return 500.0 * pow(2.80 / watts, 1.0 / 3.0)
     }
 
-    /// Parse a time/split string like "1:33.4" or "12:00.0" into total seconds
+    /// Parse a time/split string like "1:33.4", "12:00.0", or "1:20:00.0" into total seconds
     static func timeStringToSeconds(_ timeStr: String) -> Double? {
         let parts = timeStr.split(separator: ":")
-        guard parts.count == 2,
-              let minutes = Double(parts[0]),
-              let seconds = Double(parts[1]) else {
-            return nil
+        if parts.count == 2 {
+            // M:SS.s
+            guard let minutes = Double(parts[0]),
+                  let seconds = Double(parts[1]) else { return nil }
+            return minutes * 60.0 + seconds
+        } else if parts.count == 3 {
+            // H:MM:SS or H:MM:SS.s
+            guard let hours = Double(parts[0]),
+                  let minutes = Double(parts[1]),
+                  let seconds = Double(parts[2]) else { return nil }
+            return hours * 3600.0 + minutes * 60.0 + seconds
         }
-        return minutes * 60.0 + seconds
+        return nil
     }
 
     /// Format seconds back to split string "M:SS.s"

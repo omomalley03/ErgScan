@@ -73,8 +73,41 @@ struct TextPatternMatcher {
             }
         }
 
-        // 3. Convert comma to slash (in descriptor, comma is always misread separator)
-        result = result.replacingOccurrences(of: ",", with: "/")
+        // 3. Handle commas contextually:
+        // - In workout descriptors, comma is misread "/" separator: "3x4:00,3:00r" → "3x4:00/3:00r"
+        // - In distances ≥10,000m, comma is thousands separator: "15,000m" → keep or strip to "15000m"
+        // - Edge case: "2x10,000m,2:00r" has BOTH thousands separator AND misread slash
+        // Strategy: Replace each comma individually based on its context
+        var resultChars = Array(result)
+        var i = 0
+        while i < resultChars.count {
+            if resultChars[i] == "," {
+                // Check if this comma is a thousands separator
+                // Pattern: digit before, exactly 3 digits after, then possibly more digits or "m"
+                let hasDigitBefore = i > 0 && resultChars[i - 1].isNumber
+                let hasThreeDigitsAfter = i + 3 < resultChars.count &&
+                    resultChars[i + 1].isNumber &&
+                    resultChars[i + 2].isNumber &&
+                    resultChars[i + 3].isNumber
+
+                if hasDigitBefore && hasThreeDigitsAfter {
+                    // Thousands separator: remove it
+                    resultChars[i] = "\u{200B}"  // Zero-width space (filtered later)
+                } else {
+                    // Check if comma is before a time pattern (likely misread slash)
+                    let afterComma = String(resultChars[(i+1)...])
+                    if matches(afterComma, pattern: #"^\d+:\d{2}"#) {
+                        // Comma before time pattern → replace with slash
+                        resultChars[i] = "/"
+                    } else {
+                        // Unknown comma → remove it
+                        resultChars[i] = "\u{200B}"
+                    }
+                }
+            }
+            i += 1
+        }
+        result = String(resultChars.filter { $0 != "\u{200B}" })
 
         // 4. Fix missing separator: detect concatenated times after 'x'
         // Pattern: after Nx, find first complete time (\d+:\d{2}) and insert / if another digit follows
@@ -142,12 +175,31 @@ struct TextPatternMatcher {
             if chars[i] == ";" { chars[i] = ":" }
         }
 
-        // Second pass: replace `,` with `.` in numeric context
+        // Second pass: handle commas contextually
+        // - Decimal separator (European notation): "1,5" → "1.5"
+        // - Thousands separator: "15,000" → "15000" (remove it)
         for i in chars.indices {
-            if chars[i] == "," && isNumericNeighbor(chars, at: i) {
-                chars[i] = "."
+            if chars[i] == "," {
+                // Check if this looks like a thousands separator:
+                // Pattern: digit, comma, exactly 3 digits (possibly followed by more digits or end)
+                let isThousandsSeparator = i > 0 && i + 3 < chars.count &&
+                    chars[i - 1].isNumber &&
+                    chars[i + 1].isNumber &&
+                    chars[i + 2].isNumber &&
+                    chars[i + 3].isNumber
+
+                if isThousandsSeparator {
+                    // Remove thousands separator: mark for deletion
+                    chars[i] = "\u{200B}"  // Zero-width space (will be filtered out)
+                } else if isNumericNeighbor(chars, at: i) {
+                    // Decimal separator: replace with period
+                    chars[i] = "."
+                }
             }
         }
+
+        // Filter out zero-width spaces (used for thousands separator removal)
+        chars = chars.filter { $0 != "\u{200B}" }
 
         // Third pass: context-aware letter substitutions
         for i in chars.indices {
