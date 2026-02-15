@@ -189,8 +189,11 @@ struct ManualDataEntryView: View {
                     .environment(\.editMode, .constant(.active))
                     .onChange(of: activeField) { newField in
                         if case .rowField(let idx, _) = newField, idx < dataRows.count {
-                            withAnimation {
-                                proxy.scrollTo(dataRows[idx].id, anchor: .center)
+                            // Delay so keypad has time to appear before scrolling
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                                withAnimation {
+                                    proxy.scrollTo(dataRows[idx].id, anchor: .center)
+                                }
                             }
                         }
                     }
@@ -219,12 +222,28 @@ struct ManualDataEntryView: View {
                 // Action buttons row
                 HStack(spacing: 8) {
                     Button {
+                        onCancel()
+                    } label: {
+                        HStack {
+                            Image(systemName: "camera.fill")
+                            Text("Retry Scan")
+                        }
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color(.systemGray5))
+                        .foregroundColor(.primary)
+                        .cornerRadius(12)
+                    }
+
+                    Button {
                         recalculateAllSplits()
                         recalculateAvgSplit()
                     } label: {
                         HStack {
                             Image(systemName: "function")
-                            Text("Auto-Fill Splits")
+                            Text("Fill Splits")
                         }
                         .font(.subheadline)
                         .fontWeight(.semibold)

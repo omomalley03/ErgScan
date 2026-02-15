@@ -79,8 +79,12 @@ final class CameraService: NSObject, ObservableObject {
 
         captureSession.sessionPreset = .photo  // Full-resolution photo preset
 
-        // Get back camera
+        // Prefer ultra-wide camera (supports macro/close-up), fall back to wide-angle
         guard let camera = AVCaptureDevice.default(
+            .builtInUltraWideCamera,
+            for: .video,
+            position: .back
+        ) ?? AVCaptureDevice.default(
             .builtInWideAngleCamera,
             for: .video,
             position: .back
