@@ -95,9 +95,27 @@ class ScannerViewModel: ObservableObject {
             try await cameraService.setupCamera()
             print("📹 Camera setup complete")
 
-            cameraService.startSession()
+            // Start session with retry — camera hardware may still be releasing from a previous session
+            for attempt in 1...3 {
+                cameraService.startSession()
+                // Wait for the session to actually start (startSession confirms asynchronously)
+                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3s
+
+                if cameraService.isSessionRunning {
+                    print("🚀 Camera session started on attempt \(attempt)")
+                    break
+                }
+                if attempt < 3 {
+                    print("⚠️ Camera session not running after attempt \(attempt), retrying...")
+                }
+            }
+
+            if !cameraService.isSessionRunning {
+                print("❌ Camera session failed to start after 3 attempts")
+                errorMessage = "Camera failed to start. Please try again."
+            }
+
             hapticService.prepare()
-            print("🚀 Camera session started, ready to scan")
 
         } catch {
             print("❌ Camera setup error: \(error)")

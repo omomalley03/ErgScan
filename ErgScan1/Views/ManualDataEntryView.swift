@@ -84,7 +84,8 @@ struct ManualDataEntryView: View {
                 _avgHR = State(initialValue: avg.heartRate?.text ?? "")
             }
 
-            _dataRows = State(initialValue: table.rows.map { row in
+            // Build data rows from scanned data
+            var initialRows = table.rows.map { row in
                 EditableRow(
                     time: row.time?.text ?? "",
                     meters: row.meters?.text ?? "",
@@ -92,7 +93,27 @@ struct ManualDataEntryView: View {
                     rate: row.strokeRate?.text ?? "",
                     heartRate: row.heartRate?.text ?? ""
                 )
-            })
+            }
+
+            // Auto-fill missing interval rows if we know the expected count and work per rep
+            if table.category == .interval,
+               let expectedReps = table.reps,
+               let workPerRep = table.workPerRep,
+               table.isVariableInterval != true,
+               initialRows.count < expectedReps {
+                let isDistanceBased = workPerRep.hasSuffix("m")
+                while initialRows.count < expectedReps {
+                    var newRow = EditableRow()
+                    if isDistanceBased {
+                        newRow.meters = String(workPerRep.dropLast()) // "500m" → "500"
+                    } else {
+                        newRow.time = workPerRep // "20:00"
+                    }
+                    initialRows.append(newRow)
+                }
+            }
+
+            _dataRows = State(initialValue: initialRows)
         }
     }
 
@@ -121,8 +142,7 @@ struct ManualDataEntryView: View {
                     }
                 }
                 .padding(.horizontal)
-                .padding(.vertical, 12)
-                .background(Color(.secondarySystemBackground))
+                .padding(.vertical, 6)
 
                 Divider()
 
@@ -149,22 +169,32 @@ struct ManualDataEntryView: View {
                 .padding(.vertical, 4)
 
                 // Data rows in List (enables drag-to-reorder)
-                List {
-                    ForEach(Array(dataRows.enumerated()), id: \.element.id) { index, _ in
-                        dataRowView(index: index)
-                            .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
-                            .listRowBackground(
-                                (splitErrorRows.contains(index) || consistencyErrorRows.contains(index))
-                                    ? Color.red.opacity(0.15)
-                                    : Color.clear
-                            )
-                            .listRowSeparator(.hidden)
+                ScrollViewReader { proxy in
+                    List {
+                        ForEach(Array(dataRows.enumerated()), id: \.element.id) { index, _ in
+                            dataRowView(index: index)
+                                .id(dataRows[index].id)
+                                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+                                .listRowBackground(
+                                    (splitErrorRows.contains(index) || consistencyErrorRows.contains(index))
+                                        ? Color.red.opacity(0.15)
+                                        : Color.clear
+                                )
+                                .listRowSeparator(.hidden)
+                        }
+                        .onMove(perform: moveRows)
+                        .onDelete(perform: deleteRows)
                     }
-                    .onMove(perform: moveRows)
-                    .onDelete(perform: deleteRows)
+                    .listStyle(.plain)
+                    .environment(\.editMode, .constant(.active))
+                    .onChange(of: activeField) { newField in
+                        if case .rowField(let idx, _) = newField, idx < dataRows.count {
+                            withAnimation {
+                                proxy.scrollTo(dataRows[idx].id, anchor: .center)
+                            }
+                        }
+                    }
                 }
-                .listStyle(.plain)
-                .environment(\.editMode, .constant(.active))
 
                 // Completeness warning banner
                 if let warning = completenessWarning {
@@ -186,24 +216,43 @@ struct ManualDataEntryView: View {
                     .padding(.vertical, 4)
                 }
 
-                // Add row button
-                Button {
-                    withAnimation {
-                        dataRows.append(EditableRow())
+                // Action buttons row
+                HStack(spacing: 8) {
+                    Button {
+                        recalculateAllSplits()
+                        recalculateAvgSplit()
+                    } label: {
+                        HStack {
+                            Image(systemName: "function")
+                            Text("Auto-Fill Splits")
+                        }
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.green.opacity(0.1))
+                        .foregroundColor(.green)
+                        .cornerRadius(12)
                     }
-                    clearValidationState()
-                } label: {
-                    HStack {
-                        Image(systemName: "plus.circle.fill")
-                        Text(workoutType == .intervals ? "+Interval" : "+Split")
+
+                    Button {
+                        withAnimation {
+                            dataRows.append(EditableRow())
+                        }
+                        clearValidationState()
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                            Text(workoutType == .intervals ? "+Interval" : "+Split")
+                        }
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 10)
+                        .background(Color.accentColor.opacity(0.1))
+                        .foregroundColor(.accentColor)
+                        .cornerRadius(12)
                     }
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 10)
-                    .background(Color.accentColor.opacity(0.1))
-                    .foregroundColor(.accentColor)
-                    .cornerRadius(12)
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 6)
@@ -223,11 +272,6 @@ struct ManualDataEntryView: View {
                 }
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Cancel") {
-                        onCancel()
-                    }
-                }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
                         if isForceSubmitMode {
@@ -435,16 +479,29 @@ struct ManualDataEntryView: View {
                 }
                 // Row 4: . 0 :
                 HStack(spacing: 8) {
-                    keypadButton(".")
-                    keypadButton("0")
                     keypadButton(":")
+                    keypadButton("0")
+                    keypadButton(".")
                 }
-                // Row 5: ⌫ and Next/Done
+                // Row 5: ⌫, ▼ Hide, Next/Done
                 HStack(spacing: 8) {
                     Button {
                         handleBackspace()
                     } label: {
                         Image(systemName: "delete.left.fill")
+                            .font(.title3)
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 44)
+                            .background(Color(.systemGray5))
+                            .cornerRadius(8)
+                    }
+                    .foregroundColor(.primary)
+
+                    Button {
+                        activeField = nil
+                        isReplaceMode = false
+                    } label: {
+                        Image(systemName: "chevron.down")
                             .font(.title3)
                             .frame(maxWidth: .infinity)
                             .frame(height: 44)
