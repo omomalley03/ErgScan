@@ -56,6 +56,10 @@ final class Workout {
     var user: User?
     var userID: String?                 // Denormalized for query performance
 
+    // Coxswain scan-on-behalf tracking
+    var scannedForUserID: String?       // rower's userID if coxswain scanned on their behalf
+    var scannedForUsername: String?     // rower's username
+
     // CloudKit sync metadata
     var syncedToCloud: Bool = false
     var cloudKitRecordID: String?

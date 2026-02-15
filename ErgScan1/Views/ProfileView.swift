@@ -19,7 +19,7 @@ struct ProfileView: View {
 
     private var workoutCount: Int {
         guard let currentUser = currentUser else { return 0 }
-        return allWorkouts.filter { $0.userID == currentUser.appleUserID }.count
+        return allWorkouts.filter { $0.userID == currentUser.appleUserID && $0.scannedForUserID == nil }.count
     }
 
     var body: some View {

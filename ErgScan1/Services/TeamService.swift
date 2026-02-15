@@ -555,7 +555,8 @@ class TeamService: ObservableObject {
             averageSplit: record["averageSplit"] as? String ?? "",
             intensityZone: record["intensityZone"] as? String ?? "",
             isErgTest: (record["isErgTest"] as? Int64 ?? 0) == 1,
-            privacy: record["privacy"] as? String ?? "friends"
+            privacy: record["privacy"] as? String ?? "friends",
+            submittedByCoxUsername: record["submittedByCoxUsername"] as? String
         )
     }
 }

@@ -50,6 +50,7 @@ struct WorkoutSubmissionInfo: Identifiable, Hashable {
     let totalDistance: Int
     let totalTime: String
     let averageSplit: String
+    let submittedByCoxUsername: String?  // coxswain username if scanned on behalf
 }
 
 // MARK: - Assignment Errors

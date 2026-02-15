@@ -66,7 +66,8 @@ struct ScanForRowerSheet: View {
                         ScannerView(
                             cameraService: CameraService(),
                             scanOnBehalfOf: member.userID,
-                            scanOnBehalfOfUsername: member.username
+                            scanOnBehalfOfUsername: member.username,
+                            scanOnBehalfOfDisplayName: member.displayName
                         )
                     }
                 }

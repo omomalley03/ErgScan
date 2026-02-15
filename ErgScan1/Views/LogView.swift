@@ -20,7 +20,7 @@ struct LogView: View {
     // Filter workouts by current user
     private var workouts: [Workout] {
         guard let currentUser = currentUser else { return [] }
-        return allWorkouts.filter { $0.userID == currentUser.appleUserID }
+        return allWorkouts.filter { $0.userID == currentUser.appleUserID && $0.scannedForUserID == nil }
     }
 
     private var myUserID: String {

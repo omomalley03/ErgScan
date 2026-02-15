@@ -126,6 +126,12 @@ struct AssignmentDetailView: View {
                                     .font(.caption)
                                     .foregroundColor(.secondary)
 
+                                if let coxUsername = submission.submittedByCoxUsername {
+                                    Text("Submitted by @\(coxUsername)")
+                                        .font(.caption2)
+                                        .foregroundColor(.purple)
+                                }
+
                                 Button {
                                     Task {
                                         await loadAndShowWorkout(submission: submission)

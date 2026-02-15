@@ -39,6 +39,17 @@ struct WorkoutFeedCard: View {
                 }
             }
 
+            // Coxswain tag
+            if let coxUsername = workout.displaySubmittedByCox {
+                Text("Submitted by @\(coxUsername)")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 2)
+                    .background(Color.purple.opacity(0.1))
+                    .cornerRadius(4)
+            }
+
             // Stats grid
             HStack(spacing: 16) {
                 VStack(alignment: .leading, spacing: 4) {

@@ -134,11 +134,17 @@ class AssignmentService: ObservableObject {
         sharedWorkoutRecordID: String?,
         totalDistance: Int,
         totalTime: String,
-        averageSplit: String
+        averageSplit: String,
+        onBehalfOfUserID: String? = nil,
+        onBehalfOfUsername: String? = nil
     ) async throws {
         guard let userID = currentUserID, let username = currentUsername else {
             throw AssignmentError.notAuthorized
         }
+
+        // Use rower's info if scanning on behalf, otherwise use current user
+        let effectiveSubmitterID = onBehalfOfUserID ?? userID
+        let effectiveSubmitterUsername = onBehalfOfUsername ?? username
 
         // Check if already submitted
         if hasSubmitted(assignmentID: assignmentID) {
@@ -150,14 +156,19 @@ class AssignmentService: ObservableObject {
 
         record["assignmentID"] = assignmentID
         record["teamID"] = teamID
-        record["submitterID"] = userID
-        record["submitterUsername"] = username
+        record["submitterID"] = effectiveSubmitterID
+        record["submitterUsername"] = effectiveSubmitterUsername
         record["workoutRecordID"] = workoutRecordID
         record["sharedWorkoutRecordID"] = sharedWorkoutRecordID
         record["submittedAt"] = Date()
         record["totalDistance"] = totalDistance
         record["totalTime"] = totalTime
         record["averageSplit"] = averageSplit
+
+        // Tag with coxswain info if scanning on behalf
+        if onBehalfOfUserID != nil {
+            record["submittedByCoxUsername"] = username
+        }
 
         do {
             let savedRecord = try await publicDB.save(record)
@@ -235,6 +246,7 @@ class AssignmentService: ObservableObject {
         }
 
         let sharedWorkoutRecordID = record["sharedWorkoutRecordID"] as? String
+        let submittedByCoxUsername = record["submittedByCoxUsername"] as? String
 
         return WorkoutSubmissionInfo(
             id: record.recordID.recordName,
@@ -247,7 +259,8 @@ class AssignmentService: ObservableObject {
             submittedAt: submittedAt,
             totalDistance: totalDistance,
             totalTime: totalTime,
-            averageSplit: averageSplit
+            averageSplit: averageSplit,
+            submittedByCoxUsername: submittedByCoxUsername
         )
     }
 

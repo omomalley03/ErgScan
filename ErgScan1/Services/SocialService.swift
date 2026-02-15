@@ -53,6 +53,7 @@ class SocialService: ObservableObject {
         let intensityZone: String
         let isErgTest: Bool
         let privacy: String  // "private", "friends", "team", or "team:id1,id2"
+        let submittedByCoxUsername: String?  // coxswain username if scanned on behalf
     }
 
     struct WorkoutDetailResult {
@@ -612,20 +613,28 @@ class SocialService: ObservableObject {
         intensityZone: String,
         isErgTest: Bool,
         localWorkoutID: String,
-        privacy: String = "friends"
+        privacy: String = "friends",
+        onBehalfOfUserID: String? = nil,
+        onBehalfOfUsername: String? = nil,
+        onBehalfOfDisplayName: String? = nil
     ) async -> String? {
         guard let userID = currentUserID else { return nil }
         guard myProfile != nil else { return nil } // Must have a profile to share
 
-        let username = myProfile?["username"] as? String ?? ""
-        let displayName = myProfile?["displayName"] as? String ?? ""
+        let coxUsername = myProfile?["username"] as? String ?? ""
+        let myDisplayName = myProfile?["displayName"] as? String ?? ""
+
+        // Use rower's info if scanning on behalf, otherwise use current user
+        let effectiveOwnerID = onBehalfOfUserID ?? userID
+        let effectiveOwnerUsername = onBehalfOfUsername ?? coxUsername
+        let effectiveOwnerDisplayName = onBehalfOfDisplayName ?? myDisplayName
 
         do {
             // Check for existing shared workout with same localWorkoutID (dedup)
             // Skip if record type doesn't exist yet
             var existingRecord: CKRecord? = nil
             do {
-                let dedupPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
+                let dedupPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", effectiveOwnerID, localWorkoutID)
                 let dedupQuery = CKQuery(recordType: "SharedWorkout", predicate: dedupPredicate)
                 let (existing, _) = try await publicDB.records(matching: dedupQuery, resultsLimit: 1)
                 if let (_, result) = existing.first, case .success(let record) = result {
@@ -637,9 +646,14 @@ class SocialService: ObservableObject {
 
             let record = existingRecord ?? CKRecord(recordType: "SharedWorkout")
 
-            record["ownerID"] = userID
-            record["ownerUsername"] = username
-            record["ownerDisplayName"] = displayName
+            record["ownerID"] = effectiveOwnerID
+            record["ownerUsername"] = effectiveOwnerUsername
+            record["ownerDisplayName"] = effectiveOwnerDisplayName
+
+            // Tag with coxswain info if scanning on behalf
+            if onBehalfOfUserID != nil {
+                record["submittedByCoxUsername"] = coxUsername
+            }
             record["workoutDate"] = date as NSDate
             record["workoutType"] = workoutType
             record["totalTime"] = totalTime
@@ -948,7 +962,8 @@ class SocialService: ObservableObject {
             averageSplit: record["averageSplit"] as? String ?? "",
             intensityZone: record["intensityZone"] as? String ?? "",
             isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
-            privacy: record["privacy"] as? String ?? "friends"
+            privacy: record["privacy"] as? String ?? "friends",
+            submittedByCoxUsername: record["submittedByCoxUsername"] as? String
         )
     }
 
@@ -1171,7 +1186,8 @@ class SocialService: ObservableObject {
                     averageSplit: record["averageSplit"] as? String ?? "",
                     intensityZone: record["intensityZone"] as? String ?? "",
                     isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
-                    privacy: record["privacy"] as? String ?? "friends"
+                    privacy: record["privacy"] as? String ?? "friends",
+                    submittedByCoxUsername: record["submittedByCoxUsername"] as? String
                 )
             }
         } catch {
@@ -1196,7 +1212,8 @@ class SocialService: ObservableObject {
                 averageSplit: record["averageSplit"] as? String ?? "",
                 intensityZone: record["intensityZone"] as? String ?? "",
                 isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
-                privacy: record["privacy"] as? String ?? "friends"
+                privacy: record["privacy"] as? String ?? "friends",
+                submittedByCoxUsername: record["submittedByCoxUsername"] as? String
             )
         } catch {
             print("⚠️ Failed to fetch shared workout \(recordID): \(error)")

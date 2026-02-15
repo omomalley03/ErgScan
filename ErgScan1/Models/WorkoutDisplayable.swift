@@ -13,6 +13,7 @@ protocol WorkoutDisplayable {
     var displayIsErgTest: Bool { get }
     var workoutRecordID: String { get }
     var ownerUserID: String { get }
+    var displaySubmittedByCox: String? { get }
 }
 
 // MARK: - SharedWorkoutResult Conformance
@@ -29,6 +30,7 @@ extension SocialService.SharedWorkoutResult: WorkoutDisplayable {
     var displayIsErgTest: Bool { isErgTest }
     var workoutRecordID: String { id }
     var ownerUserID: String { ownerID }
+    var displaySubmittedByCox: String? { submittedByCoxUsername }
 }
 
 // MARK: - Local Workout Conformance
@@ -45,4 +47,5 @@ extension Workout: WorkoutDisplayable {
     var displayIsErgTest: Bool { isErgTest }
     var workoutRecordID: String { id.uuidString }
     var ownerUserID: String { userID ?? "" }
+    var displaySubmittedByCox: String? { nil }
 }

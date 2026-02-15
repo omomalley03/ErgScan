@@ -114,6 +114,12 @@ struct SubmissionTrackerView: View {
                         .font(.caption)
                         .foregroundColor(.green)
                 }
+
+                if let coxUsername = entry.submission?.submittedByCoxUsername {
+                    Text("Submitted by @\(coxUsername)")
+                        .font(.caption2)
+                        .foregroundColor(.purple)
+                }
             }
 
             Spacer()

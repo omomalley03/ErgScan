@@ -17,6 +17,7 @@ struct ScannerView: View {
     // Optional parameters for coxswain scan-for-others workflow
     let scanOnBehalfOf: String?
     let scanOnBehalfOfUsername: String?
+    let scanOnBehalfOfDisplayName: String?
     let assignmentID: String?
     let assignmentTeamID: String?
 
@@ -24,12 +25,14 @@ struct ScannerView: View {
         cameraService: CameraService,
         scanOnBehalfOf: String? = nil,
         scanOnBehalfOfUsername: String? = nil,
+        scanOnBehalfOfDisplayName: String? = nil,
         assignmentID: String? = nil,
         assignmentTeamID: String? = nil
     ) {
         self.cameraService = cameraService
         self.scanOnBehalfOf = scanOnBehalfOf
         self.scanOnBehalfOfUsername = scanOnBehalfOfUsername
+        self.scanOnBehalfOfDisplayName = scanOnBehalfOfDisplayName
         self.assignmentID = assignmentID
         self.assignmentTeamID = assignmentTeamID
         _viewModel = StateObject(wrappedValue: ScannerViewModel(cameraService: cameraService))
@@ -63,7 +66,14 @@ struct ScannerView: View {
                     assignmentTeamID: assignmentTeamID,
                     onSave: { editedDate, selectedZone, isErgTest, privacy in
                         Task {
-                            if let savedWorkout = await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest) {
+                            if let savedWorkout = await viewModel.saveWorkout(
+                                context: modelContext,
+                                customDate: editedDate,
+                                intensityZone: selectedZone,
+                                isErgTest: isErgTest,
+                                scanOnBehalfOfUserID: scanOnBehalfOf,
+                                scanOnBehalfOfUsername: scanOnBehalfOfUsername
+                            ) {
                                 // Publish to social feed if user has username
                                 var sharedWorkoutID: String? = nil
                                 if let username = currentUser?.username, !username.isEmpty {
@@ -76,7 +86,10 @@ struct ScannerView: View {
                                         intensityZone: savedWorkout.intensityZone ?? "",
                                         isErgTest: savedWorkout.isErgTest,
                                         localWorkoutID: savedWorkout.id.uuidString,
-                                        privacy: privacy
+                                        privacy: privacy,
+                                        onBehalfOfUserID: scanOnBehalfOf,
+                                        onBehalfOfUsername: scanOnBehalfOfUsername,
+                                        onBehalfOfDisplayName: scanOnBehalfOfDisplayName
                                     )
                                 }
 
@@ -90,7 +103,9 @@ struct ScannerView: View {
                                             sharedWorkoutRecordID: sharedWorkoutID,
                                             totalDistance: savedWorkout.totalDistance ?? 0,
                                             totalTime: savedWorkout.totalTime,
-                                            averageSplit: savedWorkout.averageSplit ?? ""
+                                            averageSplit: savedWorkout.averageSplit ?? "",
+                                            onBehalfOfUserID: scanOnBehalfOf,
+                                            onBehalfOfUsername: scanOnBehalfOfUsername
                                         )
                                         print("✅ Workout submitted to assignment \(assignmentID)")
                                     } catch {
