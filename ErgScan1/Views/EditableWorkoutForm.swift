@@ -1,11 +1,19 @@
 import SwiftUI
+import SwiftData
 
 /// Editable form view for reviewing and editing parsed workout data after lock
 struct EditableWorkoutForm: View {
 
     let table: RecognizedTable
-    let onSave: (Date, IntensityZone?, Bool) -> Void
+    let scanOnBehalfOf: String?
+    let scanOnBehalfOfUsername: String?
+    let assignmentID: String?
+    let assignmentTeamID: String?
+    let onSave: (Date, IntensityZone?, Bool, String) -> Void  // Added privacy parameter
     let onRetake: () -> Void
+
+    @Environment(\.currentUser) private var currentUser
+    @EnvironmentObject var teamService: TeamService
 
     @State private var editedWorkoutType: String
     @State private var editedDescription: String
@@ -13,9 +21,23 @@ struct EditableWorkoutForm: View {
     @State private var showDatePicker: Bool = false
     @State private var selectedZone: IntensityZone? = nil
     @State private var isErgTest: Bool = false
+    @State private var selectedPrivacy: WorkoutPrivacy = .friends
+    @State private var selectedTeams: Set<String> = []
 
-    init(table: RecognizedTable, onSave: @escaping (Date, IntensityZone?, Bool) -> Void, onRetake: @escaping () -> Void) {
+    init(
+        table: RecognizedTable,
+        scanOnBehalfOf: String? = nil,
+        scanOnBehalfOfUsername: String? = nil,
+        assignmentID: String? = nil,
+        assignmentTeamID: String? = nil,
+        onSave: @escaping (Date, IntensityZone?, Bool, String) -> Void,
+        onRetake: @escaping () -> Void
+    ) {
         self.table = table
+        self.scanOnBehalfOf = scanOnBehalfOf
+        self.scanOnBehalfOfUsername = scanOnBehalfOfUsername
+        self.assignmentID = assignmentID
+        self.assignmentTeamID = assignmentTeamID
         self.onSave = onSave
         self.onRetake = onRetake
 
@@ -164,7 +186,98 @@ struct EditableWorkoutForm: View {
                 }
                 .padding(.bottom, 4)
 
-                // 5. Descriptor Row (editable)
+                // 5. Privacy Selector (if scanning for self - coxswains don't see this)
+                if scanOnBehalfOf == nil {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Who can see this workout?")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        HStack(spacing: 8) {
+                            ForEach(WorkoutPrivacy.allCases) { privacy in
+                                Button {
+                                    selectedPrivacy = privacy
+                                } label: {
+                                    VStack(spacing: 4) {
+                                        Image(systemName: privacy.icon)
+                                            .font(.title3)
+                                        Text(privacy.displayName)
+                                            .font(.caption2)
+                                    }
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(selectedPrivacy == privacy
+                                                  ? Color.blue.opacity(0.8)
+                                                  : Color.blue.opacity(0.15))
+                                    )
+                                    .foregroundColor(selectedPrivacy == privacy ? .white : .blue)
+                                }
+                            }
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+
+                // Show team selector if Team privacy is selected
+                if scanOnBehalfOf == nil && selectedPrivacy == .team && !teamService.myTeams.isEmpty {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Select teams")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        ForEach(Array(teamService.myTeams), id: \.id) { team in
+                            Button {
+                                if selectedTeams.contains(team.id) {
+                                    selectedTeams.remove(team.id)
+                                } else {
+                                    selectedTeams.insert(team.id)
+                                }
+                            } label: {
+                                HStack {
+                                    Text(team.name)
+                                        .font(.subheadline)
+                                    Spacer()
+                                    if selectedTeams.contains(team.id) {
+                                        Image(systemName: "checkmark.circle.fill")
+                                            .foregroundColor(.blue)
+                                    }
+                                }
+                                .padding(.vertical, 8)
+                                .padding(.horizontal, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(selectedTeams.contains(team.id)
+                                              ? Color.blue.opacity(0.1)
+                                              : Color(.secondarySystemBackground))
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.bottom, 4)
+                }
+
+                // Banner for scan-on-behalf-of workflow
+                if let username = scanOnBehalfOfUsername {
+                    HStack(spacing: 8) {
+                        Image(systemName: "person.fill")
+                            .foregroundColor(.blue)
+                        Text("Scanning for @\(username)")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.blue.opacity(0.1))
+                    )
+                    .padding(.bottom, 4)
+                }
+
+                // 6. Descriptor Row (editable)
                 TextField("Description", text: $editedDescription)
                     .font(.body)
                     .textFieldStyle(.roundedBorder)
@@ -235,7 +348,18 @@ struct EditableWorkoutForm: View {
             }
 
             Button {
-                onSave(editedDate, selectedZone, isErgTest)
+                // Build privacy string
+                let privacyString: String
+                if scanOnBehalfOf != nil {
+                    // Coxswain scanning for rower - use rower's default or friends
+                    privacyString = "friends"
+                } else if selectedPrivacy == .team && !selectedTeams.isEmpty {
+                    privacyString = WorkoutPrivacy.teamPrivacy(teamIDs: Array(selectedTeams))
+                } else {
+                    privacyString = selectedPrivacy.rawValue
+                }
+
+                onSave(editedDate, selectedZone, isErgTest, privacyString)
             } label: {
                 HStack {
                     Image(systemName: "checkmark")
@@ -250,6 +374,30 @@ struct EditableWorkoutForm: View {
         }
         .padding()
         .background(Color(.systemBackground))
+        .onAppear {
+            // Load default privacy from user preferences
+            if scanOnBehalfOf == nil {
+                if let privacyString = currentUser?.defaultPrivacy {
+                    if privacyString == "private" {
+                        selectedPrivacy = .privateOnly
+                    } else if privacyString == "friends" {
+                        selectedPrivacy = .friends
+                    } else if privacyString.hasPrefix("team") {
+                        selectedPrivacy = .team
+                        selectedTeams = Set(WorkoutPrivacy.parseTeamIDs(from: privacyString))
+                    } else {
+                        selectedPrivacy = .friends
+                    }
+                } else {
+                    selectedPrivacy = .friends
+                }
+
+                // Load teams
+                Task {
+                    await teamService.loadMyTeams()
+                }
+            }
+        }
     }
 }
 
@@ -312,7 +460,7 @@ struct EditableTableRowView: View {
 
     EditableWorkoutForm(
         table: sampleTable,
-        onSave: { date, zone, isTest in print("Save with date: \(date), zone: \(zone?.rawValue ?? "none"), test: \(isTest)") },
+        onSave: { date, zone, isTest, privacy in print("Save with date: \(date), zone: \(zone?.rawValue ?? "none"), test: \(isTest), privacy: \(privacy)") },
         onRetake: { print("Retake") }
     )
 }

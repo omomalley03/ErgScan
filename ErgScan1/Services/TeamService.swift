@@ -460,6 +460,13 @@ class TeamService: ObservableObject {
         myMemberships.contains { $0.teamID == teamID && $0.membershipRole == "admin" }
     }
 
+    func hasRole(_ role: UserRole, teamID: String) -> Bool {
+        guard let membership = myMemberships.first(where: { $0.teamID == teamID }) else {
+            return false
+        }
+        return membership.hasRole(role)
+    }
+
     func membershipFor(teamID: String) -> TeamMembershipInfo? {
         myMemberships.first { $0.teamID == teamID }
     }
@@ -547,7 +554,8 @@ class TeamService: ObservableObject {
             totalDistance: record["totalDistance"] as? Int ?? 0,
             averageSplit: record["averageSplit"] as? String ?? "",
             intensityZone: record["intensityZone"] as? String ?? "",
-            isErgTest: (record["isErgTest"] as? Int64 ?? 0) == 1
+            isErgTest: (record["isErgTest"] as? Int64 ?? 0) == 1,
+            privacy: record["privacy"] as? String ?? "friends"
         )
     }
 }

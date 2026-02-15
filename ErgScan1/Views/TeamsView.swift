@@ -5,15 +5,25 @@ struct TeamsView: View {
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var socialService: SocialService
     @EnvironmentObject var teamService: TeamService
+    @EnvironmentObject var assignmentService: AssignmentService
 
     @State private var searchText = ""
     @State private var searchMode: SearchMode = .teams
     @State private var debounceTask: Task<Void, Never>?
     @State private var showCreateTeam = false
+    @State private var showCreateAssignment = false
+    @State private var showScanForRower = false
+    @State private var selectedAssignmentTab: AssignmentTab = .toDo
+    @State private var selectedWorkout: SocialService.SharedWorkoutResult?
 
     enum SearchMode: String, CaseIterable {
         case teams = "Teams"
         case users = "Users"
+    }
+
+    enum AssignmentTab {
+        case toDo
+        case completed
     }
 
     private var hasUsername: Bool {
@@ -55,6 +65,8 @@ struct TeamsView: View {
                 if let teamID = teamService.selectedTeamID {
                     await teamService.loadTeamActivity(teamID: teamID)
                     await teamService.loadRoster(teamID: teamID)
+                    await assignmentService.loadAssignments(teamID: teamID)
+                    await assignmentService.loadMySubmissions(teamID: teamID)
                 }
                 await socialService.loadPendingRequests()
                 await socialService.loadFriends()
@@ -65,6 +77,8 @@ struct TeamsView: View {
                     await socialService.loadFriends()
                     if let teamID = teamService.selectedTeamID {
                         await teamService.loadTeamActivity(teamID: teamID)
+                        await assignmentService.loadAssignments(teamID: teamID)
+                        await assignmentService.loadMySubmissions(teamID: teamID)
                     }
                 }
             }
@@ -78,10 +92,31 @@ struct TeamsView: View {
                         }
                 }
             }
+            .sheet(isPresented: $showCreateAssignment) {
+                if let teamID = teamService.selectedTeamID {
+                    CreateAssignmentSheet(teamID: teamID) {
+                        // Reload assignments after creation
+                        Task {
+                            await assignmentService.loadAssignments(teamID: teamID)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showScanForRower) {
+                if let teamID = teamService.selectedTeamID {
+                    ScanForRowerSheet(teamID: teamID)
+                }
+            }
             .alert("Error", isPresented: .constant(socialService.errorMessage != nil)) {
                 Button("OK") { socialService.errorMessage = nil }
             } message: {
                 Text(socialService.errorMessage ?? "")
+            }
+            .navigationDestination(item: $selectedWorkout) { workout in
+                UnifiedWorkoutDetailView(
+                    sharedWorkout: workout,
+                    currentUserID: currentUser?.appleUserID ?? ""
+                )
             }
         }
     }
@@ -476,11 +511,179 @@ struct TeamsView: View {
                     .foregroundColor(.primary)
                     .padding(.horizontal)
                 }
+
+                // Coach: assign workout
+                if teamService.hasRole(.coach, teamID: teamID) {
+                    Button {
+                        showCreateAssignment = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "plus.circle.fill")
+                                .foregroundColor(.green)
+                            Text("Assign Workout")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+                }
+
+                // Coxswain: scan for rowers
+                if teamService.hasRole(.coxswain, teamID: teamID) {
+                    Button {
+                        showScanForRower = true
+                    } label: {
+                        HStack {
+                            Image(systemName: "camera.fill")
+                                .foregroundColor(.purple)
+                            Text("Enter Team Scores")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                            Spacer()
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+                }
             }
+
+            // Assigned Workouts (if user is coach or rower)
+            assignedWorkoutsSection(teamID: teamID)
 
             // Team feed
             teamFeedSection
         }
+    }
+
+    // MARK: - Assigned Workouts Section
+
+    @ViewBuilder
+    private func assignedWorkoutsSection(teamID: String) -> some View {
+        if !assignmentService.myAssignments.isEmpty || teamService.hasRole(.coach, teamID: teamID) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Assigned Workouts")
+                        .font(.headline)
+                    Spacer()
+                }
+                .padding(.horizontal)
+
+                // Tab selector: To Do / Completed
+                Picker("Assignment Filter", selection: $selectedAssignmentTab) {
+                    Text("To Do").tag(AssignmentTab.toDo)
+                    Text("Completed").tag(AssignmentTab.completed)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+
+                if selectedAssignmentTab == .toDo {
+                    // To Do: assignments not yet submitted
+                    let pendingAssignments = assignmentService.myAssignments.filter { assignment in
+                        !assignmentService.hasSubmitted(assignmentID: assignment.id)
+                    }
+
+                    if pendingAssignments.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle")
+                                .font(.title2)
+                                .foregroundColor(.green)
+                            Text("All caught up!")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    } else {
+                        ForEach(pendingAssignments) { assignment in
+                            NavigationLink(destination: AssignmentDetailView(assignment: assignment, teamID: teamID)) {
+                                assignmentRow(assignment: assignment, hasSubmitted: false)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal)
+                        }
+                    }
+                } else {
+                    // Completed: assignments that have been submitted
+                    let completedAssignments = assignmentService.myAssignments.filter { assignment in
+                        assignmentService.hasSubmitted(assignmentID: assignment.id)
+                    }
+
+                    if completedAssignments.isEmpty {
+                        VStack(spacing: 8) {
+                            Image(systemName: "tray")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                            Text("No completed assignments")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 20)
+                    } else {
+                        ForEach(completedAssignments) { assignment in
+                            NavigationLink(destination: AssignmentDetailView(assignment: assignment, teamID: teamID)) {
+                                assignmentRow(assignment: assignment, hasSubmitted: true)
+                            }
+                            .buttonStyle(.plain)
+                            .padding(.horizontal)
+                        }
+                    }
+                }
+            }
+            .padding(.top)
+        }
+    }
+
+    @ViewBuilder
+    private func assignmentRow(assignment: AssignedWorkoutInfo, hasSubmitted: Bool) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: hasSubmitted ? "checkmark.circle.fill" : "clock.fill")
+                .font(.title2)
+                .foregroundColor(hasSubmitted ? .green : assignment.isPast ? .red : .blue)
+                .frame(width: 40)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(assignment.workoutName)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .foregroundColor(.primary)
+
+                if hasSubmitted {
+                    Text("Completed")
+                        .font(.caption)
+                        .foregroundColor(.green)
+                } else if assignment.isPast {
+                    Text("Overdue")
+                        .font(.caption)
+                        .foregroundColor(.red)
+                } else if assignment.daysUntilDue == 0 {
+                    Text("Due today")
+                        .font(.caption)
+                        .foregroundColor(.orange)
+                } else {
+                    Text("Due in \(assignment.daysUntilDue) days")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .padding()
+        .background(Color(.secondarySystemBackground))
+        .cornerRadius(12)
     }
 
     // MARK: - Team Feed
@@ -505,6 +708,10 @@ struct TeamsView: View {
             } else {
                 ForEach(teamService.teamActivity) { workout in
                     WorkoutFeedCard(workout: workout, showProfileHeader: true, currentUserID: currentUser?.appleUserID ?? "")
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            selectedWorkout = workout
+                        }
                         .padding(.horizontal)
                 }
             }

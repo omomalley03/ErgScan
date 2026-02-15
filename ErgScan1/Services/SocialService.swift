@@ -52,6 +52,7 @@ class SocialService: ObservableObject {
         let averageSplit: String
         let intensityZone: String
         let isErgTest: Bool
+        let privacy: String  // "private", "friends", "team", or "team:id1,id2"
     }
 
     struct WorkoutDetailResult {
@@ -610,10 +611,11 @@ class SocialService: ObservableObject {
         averageSplit: String,
         intensityZone: String,
         isErgTest: Bool,
-        localWorkoutID: String
-    ) async {
-        guard let userID = currentUserID else { return }
-        guard myProfile != nil else { return } // Must have a profile to share
+        localWorkoutID: String,
+        privacy: String = "friends"
+    ) async -> String? {
+        guard let userID = currentUserID else { return nil }
+        guard myProfile != nil else { return nil } // Must have a profile to share
 
         let username = myProfile?["username"] as? String ?? ""
         let displayName = myProfile?["displayName"] as? String ?? ""
@@ -646,6 +648,7 @@ class SocialService: ObservableObject {
             record["intensityZone"] = intensityZone
             record["isErgTest"] = (isErgTest ? 1 : 0) as NSNumber
             record["localWorkoutID"] = localWorkoutID
+            record["privacy"] = privacy
             record["createdAt"] = Date() as NSDate
 
             let savedRecord = try await publicDB.save(record)
@@ -664,8 +667,12 @@ class SocialService: ObservableObject {
                     }
                 }
             }
+
+            // Return the shared workout record ID
+            return savedRecord.recordID.recordName
         } catch {
             print("⚠️ Failed to publish workout: \(error)")
+            return nil
         }
     }
 
@@ -940,7 +947,8 @@ class SocialService: ObservableObject {
             totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
             averageSplit: record["averageSplit"] as? String ?? "",
             intensityZone: record["intensityZone"] as? String ?? "",
-            isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1
+            isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
+            privacy: record["privacy"] as? String ?? "friends"
         )
     }
 
@@ -1162,11 +1170,37 @@ class SocialService: ObservableObject {
                     totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
                     averageSplit: record["averageSplit"] as? String ?? "",
                     intensityZone: record["intensityZone"] as? String ?? "",
-                    isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1
+                    isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
+                    privacy: record["privacy"] as? String ?? "friends"
                 )
             }
         } catch {
             return []
+        }
+    }
+
+    func fetchSharedWorkout(recordID: String) async -> SharedWorkoutResult? {
+        do {
+            let ckRecordID = CKRecord.ID(recordName: recordID)
+            let record = try await publicDB.record(for: ckRecordID)
+
+            return SharedWorkoutResult(
+                id: ckRecordID.recordName,
+                ownerID: record["ownerID"] as? String ?? "",
+                ownerUsername: record["ownerUsername"] as? String ?? "",
+                ownerDisplayName: record["ownerDisplayName"] as? String ?? "",
+                workoutDate: record["workoutDate"] as? Date ?? Date(),
+                workoutType: record["workoutType"] as? String ?? "",
+                totalTime: record["totalTime"] as? String ?? "",
+                totalDistance: (record["totalDistance"] as? NSNumber)?.intValue ?? 0,
+                averageSplit: record["averageSplit"] as? String ?? "",
+                intensityZone: record["intensityZone"] as? String ?? "",
+                isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
+                privacy: record["privacy"] as? String ?? "friends"
+            )
+        } catch {
+            print("⚠️ Failed to fetch shared workout \(recordID): \(error)")
+            return nil
         }
     }
 

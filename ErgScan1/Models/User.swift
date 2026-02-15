@@ -8,8 +8,9 @@ final class User {
     var email: String?             // Optional (user may hide)
     var fullName: String?          // Optional (user may hide)
     var username: String?          // Unique handle for social features
-    var role: String?              // "rower", "coxswain", or "coach"
+    var role: String?              // "rower", "coxswain", or "coach" (CSV for multi-role)
     var isOnboarded: Bool = false  // True after completing onboarding flow
+    var defaultPrivacy: String?    // Default workout privacy: "private", "friends", "team"
     var createdAt: Date = Date()
     var lastSignInAt: Date = Date()
 
@@ -23,6 +24,7 @@ final class User {
         self.fullName = fullName
         self.role = nil
         self.isOnboarded = false
+        self.defaultPrivacy = "friends"
         self.createdAt = Date()
         self.lastSignInAt = Date()
     }

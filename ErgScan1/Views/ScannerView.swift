@@ -8,13 +8,30 @@ struct ScannerView: View {
     @Environment(\.currentUser) private var currentUser
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var socialService: SocialService
+    @EnvironmentObject var assignmentService: AssignmentService
     @AppStorage("showDebugTabs") private var showDebugTabs = false
 
     let cameraService: CameraService
     @StateObject private var viewModel: ScannerViewModel
 
-    init(cameraService: CameraService) {
+    // Optional parameters for coxswain scan-for-others workflow
+    let scanOnBehalfOf: String?
+    let scanOnBehalfOfUsername: String?
+    let assignmentID: String?
+    let assignmentTeamID: String?
+
+    init(
+        cameraService: CameraService,
+        scanOnBehalfOf: String? = nil,
+        scanOnBehalfOfUsername: String? = nil,
+        assignmentID: String? = nil,
+        assignmentTeamID: String? = nil
+    ) {
         self.cameraService = cameraService
+        self.scanOnBehalfOf = scanOnBehalfOf
+        self.scanOnBehalfOfUsername = scanOnBehalfOfUsername
+        self.assignmentID = assignmentID
+        self.assignmentTeamID = assignmentTeamID
         _viewModel = StateObject(wrappedValue: ScannerViewModel(cameraService: cameraService))
     }
 
@@ -25,6 +42,10 @@ struct ScannerView: View {
                 ManualDataEntryView(
                     initialTable: partialTable,
                     validateOnLoad: viewModel.shouldValidateOnLoad,
+                    scanOnBehalfOf: scanOnBehalfOf,
+                    scanOnBehalfOfUsername: scanOnBehalfOfUsername,
+                    assignmentID: assignmentID,
+                    assignmentTeamID: assignmentTeamID,
                     onComplete: { table in
                         viewModel.state = .locked(table)
                     },
@@ -36,11 +57,17 @@ struct ScannerView: View {
                 // Full-screen data review (no camera)
                 EditableWorkoutForm(
                     table: table,
-                    onSave: { editedDate, selectedZone, isErgTest in
+                    scanOnBehalfOf: scanOnBehalfOf,
+                    scanOnBehalfOfUsername: scanOnBehalfOfUsername,
+                    assignmentID: assignmentID,
+                    assignmentTeamID: assignmentTeamID,
+                    onSave: { editedDate, selectedZone, isErgTest, privacy in
                         Task {
                             if let savedWorkout = await viewModel.saveWorkout(context: modelContext, customDate: editedDate, intensityZone: selectedZone, isErgTest: isErgTest) {
+                                // Publish to social feed if user has username
+                                var sharedWorkoutID: String? = nil
                                 if let username = currentUser?.username, !username.isEmpty {
-                                    await socialService.publishWorkout(
+                                    sharedWorkoutID = await socialService.publishWorkout(
                                         workoutType: savedWorkout.workoutType,
                                         date: savedWorkout.date,
                                         totalTime: savedWorkout.totalTime,
@@ -48,8 +75,27 @@ struct ScannerView: View {
                                         averageSplit: savedWorkout.averageSplit ?? "",
                                         intensityZone: savedWorkout.intensityZone ?? "",
                                         isErgTest: savedWorkout.isErgTest,
-                                        localWorkoutID: savedWorkout.id.uuidString
+                                        localWorkoutID: savedWorkout.id.uuidString,
+                                        privacy: privacy
                                     )
+                                }
+
+                                // Submit to assignment if this is for an assignment
+                                if let assignmentID = assignmentID, let teamID = assignmentTeamID {
+                                    do {
+                                        try await assignmentService.submitWorkout(
+                                            assignmentID: assignmentID,
+                                            teamID: teamID,
+                                            workoutRecordID: savedWorkout.id.uuidString,
+                                            sharedWorkoutRecordID: sharedWorkoutID,
+                                            totalDistance: savedWorkout.totalDistance ?? 0,
+                                            totalTime: savedWorkout.totalTime,
+                                            averageSplit: savedWorkout.averageSplit ?? ""
+                                        )
+                                        print("✅ Workout submitted to assignment \(assignmentID)")
+                                    } catch {
+                                        print("❌ Failed to submit workout to assignment: \(error)")
+                                    }
                                 }
                             }
                         }

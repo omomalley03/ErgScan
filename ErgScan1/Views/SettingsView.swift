@@ -152,6 +152,25 @@ struct SettingsView: View {
                     }
                 }
 
+                // Privacy Section
+                Section("Privacy") {
+                    NavigationLink {
+                        PrivacySettingsView()
+                    } label: {
+                        HStack {
+                            Image(systemName: "lock.shield")
+                                .foregroundColor(.blue)
+                            Text("Workout Privacy")
+                            Spacer()
+                            if let privacy = currentUser?.defaultPrivacy {
+                                Text(privacyDisplayText(privacy))
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                }
+
                 // Appearance Section
                 Section("Appearance") {
                     Picker("Theme", selection: $themeViewModel.currentTheme) {
@@ -235,6 +254,18 @@ struct SettingsView: View {
             } message: {
                 Text(saveError ?? "Unknown error")
             }
+        }
+    }
+
+    private func privacyDisplayText(_ privacyString: String) -> String {
+        if privacyString == "private" {
+            return "Private"
+        } else if privacyString == "friends" {
+            return "Friends"
+        } else if privacyString.hasPrefix("team") {
+            return "Team"
+        } else {
+            return "Friends"
         }
     }
 }

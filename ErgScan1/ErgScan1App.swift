@@ -14,6 +14,7 @@ struct ErgScan1App: App {
     @StateObject private var themeViewModel = ThemeViewModel()
     @StateObject private var socialService = SocialService()
     @StateObject private var teamService = TeamService()
+    @StateObject private var assignmentService = AssignmentService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -73,6 +74,7 @@ struct ErgScan1App: App {
         .environmentObject(themeViewModel)
         .environmentObject(socialService)
         .environmentObject(teamService)
+        .environmentObject(assignmentService)
     }
 }
 
@@ -83,6 +85,7 @@ struct ContentViewWrapper: View {
     @EnvironmentObject var themeViewModel: ThemeViewModel
     @EnvironmentObject var socialService: SocialService
     @EnvironmentObject var teamService: TeamService
+    @EnvironmentObject var assignmentService: AssignmentService
 
     var body: some View {
         Group {
@@ -95,6 +98,7 @@ struct ContentViewWrapper: View {
                         .onAppear {
                             socialService.setCurrentUser(user.appleUserID, context: modelContext)
                             teamService.setCurrentUser(user.appleUserID, context: modelContext)
+                            assignmentService.setCurrentUser(userID: user.appleUserID, username: user.username ?? "")
                         }
                 } else {
                     OnboardingContainerView()
@@ -103,6 +107,7 @@ struct ContentViewWrapper: View {
                         .onAppear {
                             socialService.setCurrentUser(user.appleUserID, context: modelContext)
                             teamService.setCurrentUser(user.appleUserID, context: modelContext)
+                            assignmentService.setCurrentUser(userID: user.appleUserID, username: user.username ?? "")
                         }
                 }
             } else {

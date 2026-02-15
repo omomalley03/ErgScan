@@ -5,6 +5,10 @@ struct ManualDataEntryView: View {
 
     let initialTable: RecognizedTable?
     let validateOnLoad: Bool
+    let scanOnBehalfOf: String?
+    let scanOnBehalfOfUsername: String?
+    let assignmentID: String?
+    let assignmentTeamID: String?
     let onComplete: (RecognizedTable) -> Void
     let onCancel: () -> Void
 
@@ -57,9 +61,22 @@ struct ManualDataEntryView: View {
         var heartRate: String = ""
     }
 
-    init(initialTable: RecognizedTable?, validateOnLoad: Bool = false, onComplete: @escaping (RecognizedTable) -> Void, onCancel: @escaping () -> Void) {
+    init(
+        initialTable: RecognizedTable?,
+        validateOnLoad: Bool = false,
+        scanOnBehalfOf: String? = nil,
+        scanOnBehalfOfUsername: String? = nil,
+        assignmentID: String? = nil,
+        assignmentTeamID: String? = nil,
+        onComplete: @escaping (RecognizedTable) -> Void,
+        onCancel: @escaping () -> Void
+    ) {
         self.initialTable = initialTable
         self.validateOnLoad = validateOnLoad
+        self.scanOnBehalfOf = scanOnBehalfOf
+        self.scanOnBehalfOfUsername = scanOnBehalfOfUsername
+        self.assignmentID = assignmentID
+        self.assignmentTeamID = assignmentTeamID
         self.onComplete = onComplete
         self.onCancel = onCancel
 
