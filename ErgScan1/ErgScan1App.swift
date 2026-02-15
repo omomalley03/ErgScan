@@ -13,6 +13,7 @@ struct ErgScan1App: App {
     @StateObject private var authService = AuthenticationService()
     @StateObject private var themeViewModel = ThemeViewModel()
     @StateObject private var socialService = SocialService()
+    @StateObject private var teamService = TeamService()
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -71,6 +72,7 @@ struct ErgScan1App: App {
         .environmentObject(authService)
         .environmentObject(themeViewModel)
         .environmentObject(socialService)
+        .environmentObject(teamService)
     }
 }
 
@@ -80,17 +82,29 @@ struct ContentViewWrapper: View {
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var themeViewModel: ThemeViewModel
     @EnvironmentObject var socialService: SocialService
+    @EnvironmentObject var teamService: TeamService
 
     var body: some View {
         Group {
             // Authentication gate
             if case .authenticated(let user) = authService.authState {
-                MainTabView()
-                    .environment(\.currentUser, user)
-                    .environmentObject(themeViewModel)
-                    .onAppear {
-                        socialService.setCurrentUser(user.appleUserID, context: modelContext)
-                    }
+                if user.isOnboarded {
+                    MainTabView()
+                        .environment(\.currentUser, user)
+                        .environmentObject(themeViewModel)
+                        .onAppear {
+                            socialService.setCurrentUser(user.appleUserID, context: modelContext)
+                            teamService.setCurrentUser(user.appleUserID, context: modelContext)
+                        }
+                } else {
+                    OnboardingContainerView()
+                        .environment(\.currentUser, user)
+                        .environmentObject(themeViewModel)
+                        .onAppear {
+                            socialService.setCurrentUser(user.appleUserID, context: modelContext)
+                            teamService.setCurrentUser(user.appleUserID, context: modelContext)
+                        }
+                }
             } else {
                 AuthenticationView(authService: authService)
                     .environmentObject(themeViewModel)

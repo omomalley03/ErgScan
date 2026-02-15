@@ -1211,6 +1211,31 @@ class SocialService: ObservableObject {
         }
     }
 
+    // MARK: - Profile Role
+
+    func updateProfileRole(_ role: String) async {
+        guard let userID = currentUserID else { return }
+
+        // Load profile if needed
+        if myProfile == nil {
+            await loadMyProfile()
+        }
+
+        guard let profile = myProfile else {
+            print("⚠️ No profile to update role on")
+            return
+        }
+
+        profile["role"] = role
+        do {
+            let saved = try await publicDB.save(profile)
+            myProfile = saved
+            print("✅ Updated profile role to: \(role)")
+        } catch {
+            print("❌ Failed to update profile role: \(error)")
+        }
+    }
+
     // MARK: - Errors
 
     enum SocialError: LocalizedError {

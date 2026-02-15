@@ -11,6 +11,7 @@ import SwiftData
 struct ProfileView: View {
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var socialService: SocialService
+    @EnvironmentObject var teamService: TeamService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @Binding var showSearch: Bool
     @State private var showSettings = false
@@ -93,6 +94,36 @@ struct ProfileView: View {
                                 .foregroundColor(.blue)
                             Text("\(friendCount) Friends")
                                 .font(.headline)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+
+                    // Teams Link
+                    NavigationLink(destination: MyTeamsListView()) {
+                        HStack {
+                            Image(systemName: "person.3.fill")
+                                .foregroundColor(.blue)
+                            Text("\(teamService.myTeams.count) Teams")
+                                .font(.headline)
+
+                            if !teamService.myPendingTeamRequests.isEmpty {
+                                Text("\(teamService.myPendingTeamRequests.count)")
+                                    .font(.caption2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 2)
+                                    .background(Color.orange)
+                                    .clipShape(Capsule())
+                            }
+
                             Spacer()
                             Image(systemName: "chevron.right")
                                 .foregroundColor(.secondary)

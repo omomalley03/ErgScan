@@ -8,6 +8,8 @@ final class User {
     var email: String?             // Optional (user may hide)
     var fullName: String?          // Optional (user may hide)
     var username: String?          // Unique handle for social features
+    var role: String?              // "rower", "coxswain", or "coach"
+    var isOnboarded: Bool = false  // True after completing onboarding flow
     var createdAt: Date = Date()
     var lastSignInAt: Date = Date()
 
@@ -19,6 +21,8 @@ final class User {
         self.appleUserID = appleUserID
         self.email = email
         self.fullName = fullName
+        self.role = nil
+        self.isOnboarded = false
         self.createdAt = Date()
         self.lastSignInAt = Date()
     }

@@ -37,7 +37,7 @@ struct MainTabView: View {
                 case .add:
                     EmptyView()  // Never shown (center button doesn't navigate)
                 case .teams:
-                    FriendsView(showSearch: $showSearch)
+                    TeamsView(showSearch: $showSearch)
                 case .profile:
                     ProfileView(showSearch: $showSearch)
                 }

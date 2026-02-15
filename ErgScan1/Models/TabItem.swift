@@ -23,7 +23,7 @@ enum TabItem: Int, CaseIterable {
         case .add:
             return ""
         case .teams:
-            return "Friends"
+            return "Teams"
         case .profile:
             return "Profile"
         }
@@ -38,7 +38,7 @@ enum TabItem: Int, CaseIterable {
         case .add:
             return "plus"
         case .teams:
-            return "person.2.fill"
+            return "person.3.fill"
         case .profile:
             return "person.circle.fill"
         }
@@ -53,7 +53,7 @@ enum TabItem: Int, CaseIterable {
         case .add:
             return "plus"
         case .teams:
-            return "person.2"
+            return "person.3"
         case .profile:
             return "person.circle"
         }
