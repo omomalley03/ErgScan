@@ -91,6 +91,12 @@ struct ScannerView: View {
                                         onBehalfOfUsername: scanOnBehalfOfUsername,
                                         onBehalfOfDisplayName: scanOnBehalfOfDisplayName
                                     )
+
+                                    // Mark workout as published
+                                    if let recordID = sharedWorkoutID {
+                                        savedWorkout.sharedWorkoutRecordID = recordID
+                                        try? modelContext.save()
+                                    }
                                 }
 
                                 // Submit to assignment if this is for an assignment

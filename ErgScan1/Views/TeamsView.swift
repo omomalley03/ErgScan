@@ -60,16 +60,16 @@ struct TeamsView: View {
                 }
             }
             .refreshable {
-                await teamService.loadMyTeams()
+                await teamService.loadMyTeams(forceRefresh: true)
                 await teamService.loadMyPendingRequests()
                 if let teamID = teamService.selectedTeamID {
-                    await teamService.loadTeamActivity(teamID: teamID)
+                    await teamService.loadTeamActivity(teamID: teamID, forceRefresh: true)
                     await teamService.loadRoster(teamID: teamID)
                     await assignmentService.loadAssignments(teamID: teamID)
                     await assignmentService.loadMySubmissions(teamID: teamID)
                 }
                 await socialService.loadPendingRequests()
-                await socialService.loadFriends()
+                await socialService.loadFriends(forceRefresh: true)
             }
             .task {
                 if hasUsername {

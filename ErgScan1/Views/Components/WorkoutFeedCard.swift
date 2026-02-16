@@ -272,8 +272,11 @@ struct WorkoutFeedCard: View {
     // MARK: - Data Loading
 
     private func loadChupAndCommentData() async {
+        // Load chups (always needed for the button state)
         chupInfo = await socialService.fetchChups(for: workout.workoutRecordID)
 
+        // Only fetch comment count + latest preview (not full comments)
+        // Full comments are loaded lazily when user taps the comment button
         let comments = await socialService.fetchComments(for: workout.workoutRecordID)
         commentCount = comments.count
         latestComment = comments.last

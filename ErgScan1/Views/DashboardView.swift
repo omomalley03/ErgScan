@@ -37,6 +37,8 @@ struct DashboardView: View {
     @Query private var allGoals: [Goal]
     @State private var weekOffset: Int = 0  // 0 = this week, 1 = last week, etc.
     @State private var selectedFeedWorkout: SocialService.SharedWorkoutResult?
+    @State private var isLoadingMore = false
+    @State private var hasMoreActivity = true
 
     private var userGoal: Goal? {
         guard let currentUser = currentUser else { return nil }
@@ -169,6 +171,22 @@ struct DashboardView: View {
                         .onTapGesture {
                             selectedFeedWorkout = workout
                         }
+                        .onAppear {
+                            // Trigger load more when last item appears
+                            if workout.id == socialService.friendActivity.last?.id && hasMoreActivity && !isLoadingMore {
+                                Task {
+                                    isLoadingMore = true
+                                    let newItems = await socialService.loadMoreFriendActivity()
+                                    hasMoreActivity = !newItems.isEmpty
+                                    isLoadingMore = false
+                                }
+                            }
+                        }
+                    }
+
+                    if isLoadingMore {
+                        ProgressView()
+                            .padding()
                     }
                 }
                 .padding(.horizontal)
@@ -218,7 +236,8 @@ struct DashboardView: View {
                     await socialService.loadFriendActivity()
                 }
                 .refreshable {
-                    await socialService.loadFriendActivity()
+                    hasMoreActivity = true
+                    await socialService.loadFriendActivity(forceRefresh: true)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarLeading) {

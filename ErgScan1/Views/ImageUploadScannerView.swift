@@ -558,7 +558,7 @@ struct ImageUploadScannerView: View {
 
             // Publish to social feed
             if let username = currentUser.username, !username.isEmpty {
-                _ = await socialService.publishWorkout(
+                let recordID = await socialService.publishWorkout(
                     workoutType: workout.workoutType,
                     date: workout.date,
                     totalTime: workout.totalTime,
@@ -569,6 +569,12 @@ struct ImageUploadScannerView: View {
                     localWorkoutID: workout.id.uuidString,
                     privacy: privacy
                 )
+
+                // Mark workout as published
+                if let recordID = recordID {
+                    workout.sharedWorkoutRecordID = recordID
+                    try? modelContext.save()
+                }
             }
 
             dismiss()

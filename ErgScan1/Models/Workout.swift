@@ -60,10 +60,13 @@ final class Workout {
     var scannedForUserID: String?       // rower's userID if coxswain scanned on their behalf
     var scannedForUsername: String?     // rower's username
 
-    // CloudKit sync metadata
+    // CloudKit sync metadata (private database)
     var syncedToCloud: Bool = false
     var cloudKitRecordID: String?
     var lastSyncedAt: Date?
+
+    // Public sharing metadata (SharedWorkout in public database)
+    var sharedWorkoutRecordID: String?  // Record ID in public database, nil if not yet published
 
     init(
         date: Date,

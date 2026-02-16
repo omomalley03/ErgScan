@@ -112,7 +112,7 @@ struct EditWorkoutView: View {
             // Publish to friends if user has a username
             if let username = currentUser?.username, !username.isEmpty {
                 Task {
-                    await socialService.publishWorkout(
+                    let recordID = await socialService.publishWorkout(
                         workoutType: workout.workoutType,
                         date: workout.date,
                         totalTime: workout.totalTime,
@@ -122,6 +122,12 @@ struct EditWorkoutView: View {
                         isErgTest: workout.isErgTest,
                         localWorkoutID: workout.id.uuidString
                     )
+
+                    // Mark workout as published
+                    if let recordID = recordID {
+                        workout.sharedWorkoutRecordID = recordID
+                        try? modelContext.save()
+                    }
                 }
             }
 

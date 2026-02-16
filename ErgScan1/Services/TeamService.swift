@@ -26,11 +26,34 @@ class TeamService: ObservableObject {
     private(set) var currentUserID: String?
     private var modelContext: ModelContext?
 
+    // MARK: - Cache
+
+    var cacheService: SocialCacheService?
+
     // MARK: - Initialization
 
     func setCurrentUser(_ appleUserID: String, context: ModelContext) {
         currentUserID = appleUserID
         modelContext = context
+
+        // Load cached teams immediately (instant UI)
+        if let cache = cacheService {
+            let cachedTeams = cache.getCachedTeams()
+            if !cachedTeams.isEmpty {
+                myTeams = cachedTeams
+                if selectedTeamID == nil, let first = cachedTeams.first {
+                    selectedTeamID = first.id
+                }
+            }
+            if let teamID = selectedTeamID {
+                let cachedActivity = cache.getCachedTeamActivity(teamID: teamID)
+                if !cachedActivity.isEmpty {
+                    teamActivity = cachedActivity
+                }
+            }
+        }
+
+        // Background sync
         Task {
             await loadMyTeams()
             await loadMyPendingRequests()
@@ -112,8 +135,25 @@ class TeamService: ObservableObject {
         }
     }
 
-    func loadMyTeams() async {
+    func loadMyTeams(forceRefresh: Bool = false) async {
         guard let userID = currentUserID else { return }
+
+        // Show cache first if available and fresh
+        if !forceRefresh, let cache = cacheService {
+            let cachedTeams = cache.getCachedTeams()
+            let cachedMemberships = cache.getCachedMyMemberships()
+
+            if !cachedTeams.isEmpty {
+                myTeams = cachedTeams
+                myMemberships = cachedMemberships  // Load roles immediately
+                if selectedTeamID == nil, let first = cachedTeams.first {
+                    selectedTeamID = first.id
+                }
+            }
+            if !cache.isCacheStale(category: "myTeams", threshold: SocialCacheService.friendsStaleness) {
+                return
+            }
+        }
 
         do {
             // Get all approved memberships for current user
@@ -153,11 +193,17 @@ class TeamService: ObservableObject {
                 selectedTeamID = first.id
             }
             print("✅ Loaded \(teams.count) teams")
+
+            // Save to cache with pruning
+            cacheService?.saveTeams(teams)
+            cacheService?.saveMyMemberships(memberships)  // Cache roles for instant load
+            cacheService?.updateSyncTimestamp(category: "myTeams")
         } catch let error as CKError where error.code == .unknownItem {
             myTeams = []
             myMemberships = []
         } catch {
             print("❌ Failed to load teams: \(error)")
+            // Keep showing cached data on failure
         }
     }
 
@@ -401,7 +447,19 @@ class TeamService: ObservableObject {
 
     // MARK: - Team Feed
 
-    func loadTeamActivity(teamID: String) async {
+    func loadTeamActivity(teamID: String, forceRefresh: Bool = false) async {
+        // Show cache first if available and fresh
+        if !forceRefresh, let cache = cacheService {
+            let cached = cache.getCachedTeamActivity(teamID: teamID)
+            if !cached.isEmpty {
+                teamActivity = cached
+            }
+            let category = "teamActivity:\(teamID)"
+            if !cache.isCacheStale(category: category, threshold: SocialCacheService.feedStaleness) {
+                return
+            }
+        }
+
         isLoading = true
         defer { isLoading = false }
 
@@ -411,46 +469,48 @@ class TeamService: ObservableObject {
             let memberQuery = CKQuery(recordType: "TeamMembership", predicate: memberPredicate)
             let (memberResults, _) = try await publicDB.records(matching: memberQuery, resultsLimit: 50)
 
-            var memberIDs: Set<String> = []
+            var memberIDs: [String] = []
             for (_, result) in memberResults {
                 guard case .success(let record) = result else { continue }
                 if let uid = record["userID"] as? String {
-                    memberIDs.insert(uid)
+                    memberIDs.append(uid)
                 }
             }
 
-            // Fetch recent workouts from each member
+            guard !memberIDs.isEmpty else {
+                teamActivity = []
+                cacheService?.saveTeamActivity(teamID: teamID, workouts: [], prune: true)
+                cacheService?.updateSyncTimestamp(category: "teamActivity:\(teamID)")
+                return
+            }
+
+            // Single batched CloudKit query using IN predicate (replaces N+1 loop)
+            let workoutPredicate = NSPredicate(format: "ownerID IN %@", memberIDs)
+            let workoutQuery = CKQuery(recordType: "SharedWorkout", predicate: workoutPredicate)
+            workoutQuery.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
+            let (workoutResults, _) = try await publicDB.records(matching: workoutQuery, resultsLimit: 20)
+
             var allWorkouts: [SocialService.SharedWorkoutResult] = []
-            for memberID in memberIDs {
-                do {
-                    let predicate = NSPredicate(format: "ownerID == %@", memberID)
-                    let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
-                    query.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
-                    let (results, _) = try await publicDB.records(matching: query, resultsLimit: 3)
-
-                    for (_, result) in results {
-                        guard case .success(let record) = result else { continue }
-                        allWorkouts.append(parseSharedWorkoutRecord(record))
-                    }
-                } catch let error as CKError where error.code == .unknownItem {
-                    continue
-                } catch {
-                    print("⚠️ Failed to load workouts for member \(memberID): \(error)")
-                    continue
-                }
+            for (_, result) in workoutResults {
+                guard case .success(let record) = result else { continue }
+                allWorkouts.append(parseSharedWorkoutRecord(record))
             }
 
-            teamActivity = allWorkouts
-                .sorted { $0.workoutDate > $1.workoutDate }
-                .prefix(10)
-                .map { $0 }
+            teamActivity = allWorkouts.sorted { $0.workoutDate > $1.workoutDate }
+
+            // Save to cache with zombie pruning
+            cacheService?.saveTeamActivity(teamID: teamID, workouts: teamActivity, prune: true)
+            cacheService?.updateSyncTimestamp(category: "teamActivity:\(teamID)")
 
             print("✅ Loaded \(teamActivity.count) team activity items")
         } catch let error as CKError where error.code == .unknownItem {
             teamActivity = []
         } catch {
             print("❌ Failed to load team activity: \(error)")
-            errorMessage = "Could not load team activity"
+            // Keep showing cached data on failure
+            if teamActivity.isEmpty {
+                errorMessage = "Could not load team activity"
+            }
         }
     }
 

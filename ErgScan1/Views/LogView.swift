@@ -79,7 +79,7 @@ struct LogView: View {
                         processHighlight(proxy: proxy)
                     }
                     .refreshable {
-                        await socialService.loadFriendActivity()
+                        await socialService.loadFriendActivity(forceRefresh: true)
                     }
                 }
             }

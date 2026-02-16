@@ -73,17 +73,36 @@ class SocialService: ObservableObject {
     private(set) var currentUserID: String?
     private var modelContext: ModelContext?
 
+    // MARK: - Cache
+
+    var cacheService: SocialCacheService?
+    private var friendActivityPaginator: PaginatedCloudKitFetcher?
+
     // MARK: - Profile Management
 
     func setCurrentUser(_ appleUserID: String, context: ModelContext) {
         currentUserID = appleUserID
         modelContext = context
 
+        // Load cached data immediately (instant UI)
+        if let cache = cacheService {
+            let cachedFriends = cache.getCachedFriends()
+            if !cachedFriends.isEmpty { friends = cachedFriends }
+            let cachedActivity = cache.getCachedFriendActivity()
+            if !cachedActivity.isEmpty { friendActivity = cachedActivity }
+        }
+
         // Profile + status check in parallel (needed for UI)
         Task {
             async let statusCheck: Void = checkCloudKitStatus()
             async let profileLoad: Void = loadMyProfile()
             _ = await (statusCheck, profileLoad)
+        }
+
+        // Background sync social data
+        Task {
+            await loadFriends()
+            await loadFriendActivity()
         }
 
         // Defer heavy workout sync — not needed immediately at startup
@@ -475,8 +494,8 @@ class SocialService: ObservableObject {
 
             // Remove from pending, refresh friends
             pendingRequests.removeAll { $0.id == request.id }
-            await loadFriends()
-            await loadFriendActivity()
+            await loadFriends(forceRefresh: true)
+            await loadFriendActivity(forceRefresh: true)
             HapticService.shared.lightImpact()
         } catch {
             print("⚠️ Failed to accept request: \(error)")
@@ -534,8 +553,8 @@ class SocialService: ObservableObject {
             }
 
             // Refresh friends list and activity
-            await loadFriends()
-            await loadFriendActivity()
+            await loadFriends(forceRefresh: true)
+            await loadFriendActivity(forceRefresh: true)
             HapticService.shared.lightImpact()
         } catch {
             print("⚠️ Failed to unfriend: \(error)")
@@ -545,8 +564,19 @@ class SocialService: ObservableObject {
 
     // MARK: - Friends List
 
-    func loadFriends() async {
+    func loadFriends(forceRefresh: Bool = false) async {
         guard let userID = currentUserID else { return }
+
+        // Show cache first if available and fresh
+        if !forceRefresh, let cache = cacheService {
+            let cached = cache.getCachedFriends()
+            if !cached.isEmpty {
+                friends = cached
+            }
+            if !cache.isCacheStale(category: "friends", threshold: SocialCacheService.friendsStaleness) {
+                return
+            }
+        }
 
         do {
             // Query accepted requests where we're sender or receiver
@@ -572,6 +602,8 @@ class SocialService: ObservableObject {
             // Batch-fetch friend profiles
             guard !friendIDs.isEmpty else {
                 friends = []
+                cacheService?.saveFriends([])
+                cacheService?.updateSyncTimestamp(category: "friends")
                 return
             }
 
@@ -594,11 +626,16 @@ class SocialService: ObservableObject {
             }
 
             friends = profiles
+
+            // Save to cache with pruning
+            cacheService?.saveFriends(profiles)
+            cacheService?.updateSyncTimestamp(category: "friends")
         } catch let error as CKError where error.code == .unknownItem {
             // Record type doesn't exist yet — no friends
             friends = []
         } catch {
             print("⚠️ Failed to load friends: \(error)")
+            // Keep showing cached data on network failure
         }
     }
 
@@ -893,6 +930,7 @@ class SocialService: ObservableObject {
 
     /// Publishes all existing local workouts that haven't been shared yet.
     /// Called on startup and after username setup to ensure friends can see all workouts.
+    /// Only publishes workouts without a sharedWorkoutRecordID (not yet published).
     func publishExistingWorkouts() async {
         guard let userID = currentUserID,
               let context = modelContext,
@@ -903,17 +941,19 @@ class SocialService: ObservableObject {
 
         let targetUserID = userID
         do {
+            // Only fetch workouts that haven't been published yet (no sharedWorkoutRecordID)
             let descriptor = FetchDescriptor<Workout>(
                 predicate: #Predicate<Workout> { workout in
-                    workout.userID == targetUserID
+                    workout.userID == targetUserID && workout.sharedWorkoutRecordID == nil
                 }
             )
-            let workouts = try context.fetch(descriptor)
-            guard !workouts.isEmpty else { return }
-            print("📤 Publishing \(workouts.count) existing workouts...")
+            let unpublishedWorkouts = try context.fetch(descriptor)
+            guard !unpublishedWorkouts.isEmpty else { return }
 
-            for workout in workouts {
-                await publishWorkout(
+            print("📤 Publishing \(unpublishedWorkouts.count) new workouts...")
+
+            for workout in unpublishedWorkouts {
+                if let recordID = await publishWorkout(
                     workoutType: workout.workoutType,
                     date: workout.date,
                     totalTime: workout.workTime,
@@ -922,59 +962,135 @@ class SocialService: ObservableObject {
                     intensityZone: workout.intensityZone ?? "",
                     isErgTest: workout.isErgTest,
                     localWorkoutID: workout.id.uuidString
-                )
+                ) {
+                    // Mark workout as published
+                    workout.sharedWorkoutRecordID = recordID
+                }
             }
-            print("✅ Finished publishing existing workouts")
+
+            try? context.save()
+            print("✅ Finished publishing \(unpublishedWorkouts.count) workouts")
         } catch {
             print("⚠️ Failed to publish existing workouts: \(error)")
         }
     }
 
-    func loadFriendActivity() async {
+    func loadFriendActivity(forceRefresh: Bool = false) async {
         // Ensure friends are loaded
         if friends.isEmpty {
             await loadFriends()
+        }
+
+        // Show cache first if available and fresh
+        if !forceRefresh, let cache = cacheService {
+            let cached = cache.getCachedFriendActivity()
+            if !cached.isEmpty {
+                friendActivity = cached
+            }
+            if !cache.isCacheStale(category: "friendActivity", threshold: SocialCacheService.feedStaleness) {
+                return
+            }
         }
 
         isLoading = true
         defer { isLoading = false }
 
         do {
-            var allWorkouts: [SharedWorkoutResult] = []
+            guard let userID = currentUserID else { return }
 
-            // Include current user's own shared workouts
-            if let userID = currentUserID {
-                let ownPredicate = NSPredicate(format: "ownerID == %@", userID)
-                let ownQuery = CKQuery(recordType: "SharedWorkout", predicate: ownPredicate)
-                ownQuery.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
-                let (ownResults, _) = try await publicDB.records(matching: ownQuery, resultsLimit: 10)
-                for (recordID, result) in ownResults {
-                    guard case .success(let record) = result else { continue }
-                    allWorkouts.append(sharedWorkoutResult(from: record, recordID: recordID, fallbackID: userID, fallbackUsername: myProfile?["username"] as? String ?? "", fallbackDisplayName: myProfile?["displayName"] as? String ?? ""))
-                }
-            }
+            // Build a single array of all IDs to query (self + all friends)
+            var allIDs = friends.map { $0.id }
+            allIDs.append(userID)
 
-            // Query last 3 workouts per friend
+            // Build a lookup map for fallback display info
+            var displayInfoMap: [String: (username: String, displayName: String)] = [:]
+            displayInfoMap[userID] = (
+                username: myProfile?["username"] as? String ?? "",
+                displayName: myProfile?["displayName"] as? String ?? ""
+            )
             for friend in friends {
-                let predicate = NSPredicate(format: "ownerID == %@", friend.id)
-                let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
-                query.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
-                let (results, _) = try await publicDB.records(matching: query, resultsLimit: 3)
-
-                for (recordID, result) in results {
-                    guard case .success(let record) = result else { continue }
-                    allWorkouts.append(sharedWorkoutResult(from: record, recordID: recordID, fallbackID: friend.id, fallbackUsername: friend.username, fallbackDisplayName: friend.displayName))
-                }
+                displayInfoMap[friend.id] = (username: friend.username, displayName: friend.displayName)
             }
 
-            // Sort all by date descending
-            friendActivity = allWorkouts.sorted { $0.workoutDate > $1.workoutDate }
+            // Single batched CloudKit query using IN predicate (replaces N+1 loop)
+            let predicate = NSPredicate(format: "ownerID IN %@", allIDs)
+            let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
+            query.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
+
+            // Use paginator for cursor-based pagination
+            let paginator = PaginatedCloudKitFetcher(database: publicDB, pageSize: 20)
+            let page = try await paginator.fetchFirstPage(query: query)
+            friendActivityPaginator = paginator
+
+            var allWorkouts: [SharedWorkoutResult] = []
+            for record in page.records {
+                let ownerID = record["ownerID"] as? String ?? ""
+                let info = displayInfoMap[ownerID] ?? (username: "", displayName: "")
+                allWorkouts.append(sharedWorkoutResult(
+                    from: record,
+                    recordID: record.recordID,
+                    fallbackID: ownerID,
+                    fallbackUsername: info.username,
+                    fallbackDisplayName: info.displayName
+                ))
+            }
+
+            friendActivity = allWorkouts
+
+            // Save to cache with zombie pruning
+            cacheService?.saveFriendActivity(friendActivity, prune: true)
+            cacheService?.updateSyncTimestamp(category: "friendActivity")
         } catch let error as CKError where error.code == .unknownItem {
             // SharedWorkout type doesn't exist yet — no activity
             friendActivity = []
         } catch {
             print("⚠️ Failed to load friend activity: \(error)")
-            errorMessage = "Could not load activity feed."
+            // Keep showing cached data on network failure
+            if friendActivity.isEmpty {
+                errorMessage = "Could not load activity feed."
+            }
+        }
+    }
+
+    func loadMoreFriendActivity() async -> [SharedWorkoutResult] {
+        guard let paginator = friendActivityPaginator else { return [] }
+        guard let userID = currentUserID else { return [] }
+
+        // Build display info map
+        var displayInfoMap: [String: (username: String, displayName: String)] = [:]
+        displayInfoMap[userID] = (
+            username: myProfile?["username"] as? String ?? "",
+            displayName: myProfile?["displayName"] as? String ?? ""
+        )
+        for friend in friends {
+            displayInfoMap[friend.id] = (username: friend.username, displayName: friend.displayName)
+        }
+
+        do {
+            guard let page = try await paginator.fetchNextPage() else { return [] }
+
+            var newWorkouts: [SharedWorkoutResult] = []
+            for record in page.records {
+                let ownerID = record["ownerID"] as? String ?? ""
+                let info = displayInfoMap[ownerID] ?? (username: "", displayName: "")
+                newWorkouts.append(sharedWorkoutResult(
+                    from: record,
+                    recordID: record.recordID,
+                    fallbackID: ownerID,
+                    fallbackUsername: info.username,
+                    fallbackDisplayName: info.displayName
+                ))
+            }
+
+            friendActivity.append(contentsOf: newWorkouts)
+
+            // Append to cache without pruning (pagination appends, doesn't replace)
+            cacheService?.saveFriendActivity(friendActivity, prune: false)
+
+            return newWorkouts
+        } catch {
+            print("⚠️ Failed to load more friend activity: \(error)")
+            return []
         }
     }
 
@@ -1085,39 +1201,45 @@ class SocialService: ObservableObject {
             let query = CKQuery(recordType: "WorkoutChup", predicate: predicate)
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
 
-            var chupUsers: [ChupUser] = []
+            // Collect all chup records and unique user IDs
+            var chupRecords: [(userID: String, username: String, timestamp: Date, isBigChup: Bool)] = []
+            var userIDs: Set<String> = []
+
             for (_, result) in results {
                 guard case .success(let record) = result else { continue }
-
                 guard let userID = record["userID"] as? String,
                       let username = record["username"] as? String,
-                      let timestamp = record["timestamp"] as? Date else {
-                    continue
-                }
-
+                      let timestamp = record["timestamp"] as? Date else { continue }
                 let isBigChup = (record["isBigChup"] as? NSNumber)?.intValue == 1
+                chupRecords.append((userID, username, timestamp, isBigChup))
+                userIDs.insert(userID)
+            }
 
-                // Try to fetch display name from user profile (optional)
-                var displayName: String?
-                do {
-                    let profilePredicate = NSPredicate(format: "userID == %@", userID)
-                    let profileQuery = CKQuery(recordType: "UserProfile", predicate: profilePredicate)
-                    let (profileResults, _) = try await publicDB.records(matching: profileQuery, resultsLimit: 1)
-                    if let (_, profileResult) = profileResults.first,
-                       case .success(let profileRecord) = profileResult {
-                        displayName = profileRecord["displayName"] as? String
-                    }
-                } catch {
-                    // Couldn't fetch display name, that's okay
+            // Build display name map: first check cached friends, then batch-fetch remaining from CloudKit
+            var displayNames: [String: String] = [:]
+
+            // Use cached friend data first (avoids CloudKit queries for known friends)
+            for friend in friends {
+                displayNames[friend.id] = friend.displayName
+            }
+
+            // Batch fetch profiles for users not in friend list
+            let unknownIDs = userIDs.filter { displayNames[$0] == nil }
+            for uid in unknownIDs {
+                let profileID = CKRecord.ID(recordName: uid)
+                if let record = try? await publicDB.record(for: profileID) {
+                    displayNames[uid] = record["displayName"] as? String
                 }
+            }
 
-                chupUsers.append(ChupUser(
-                    id: userID,
-                    username: username,
-                    displayName: displayName,
-                    isBigChup: isBigChup,
-                    timestamp: timestamp
-                ))
+            let chupUsers = chupRecords.map { r in
+                ChupUser(
+                    id: r.userID,
+                    username: r.username,
+                    displayName: displayNames[r.userID],
+                    isBigChup: r.isBigChup,
+                    timestamp: r.timestamp
+                )
             }
 
             // Sort: big chups first (by timestamp desc), then regular chups (by timestamp desc)
@@ -1172,21 +1294,34 @@ class SocialService: ObservableObject {
             query.sortDescriptors = [NSSortDescriptor(key: "timestamp", ascending: true)]
             let (results, _) = try await publicDB.records(matching: query, resultsLimit: 100)
 
+            // Collect all comment IDs for batch heart check
+            let commentIDs = results.compactMap { (recordID, result) -> String? in
+                guard case .success = result else { return nil }
+                return recordID.recordName
+            }
+
+            // Batch fetch all hearts for current user in ONE query (replaces N+1 loop)
+            var heartedCommentIDs: Set<String> = []
+            if !commentIDs.isEmpty {
+                do {
+                    let heartPred = NSPredicate(format: "userID == %@ AND commentID IN %@", userID, commentIDs)
+                    let heartQuery = CKQuery(recordType: "CommentHeart", predicate: heartPred)
+                    let (heartResults, _) = try await publicDB.records(matching: heartQuery, resultsLimit: 200)
+                    for (_, heartResult) in heartResults {
+                        guard case .success(let record) = heartResult else { continue }
+                        if let commentID = record["commentID"] as? String {
+                            heartedCommentIDs.insert(commentID)
+                        }
+                    }
+                } catch {
+                    // Ignore heart fetch errors
+                }
+            }
+
             var comments: [CommentInfo] = []
             for (recordID, result) in results {
                 guard case .success(let record) = result else { continue }
                 let commentID = recordID.recordName
-
-                // Check if current user hearted this comment
-                var hearted = false
-                do {
-                    let heartPred = NSPredicate(format: "commentID == %@ AND userID == %@", commentID, userID)
-                    let heartQuery = CKQuery(recordType: "CommentHeart", predicate: heartPred)
-                    let (heartResults, _) = try await publicDB.records(matching: heartQuery, resultsLimit: 1)
-                    hearted = !heartResults.isEmpty
-                } catch {
-                    // Ignore heart fetch errors
-                }
 
                 comments.append(CommentInfo(
                     id: commentID,
@@ -1195,7 +1330,7 @@ class SocialService: ObservableObject {
                     text: record["text"] as? String ?? "",
                     timestamp: record["timestamp"] as? Date ?? Date(),
                     heartCount: (record["hearts"] as? NSNumber)?.intValue ?? 0,
-                    currentUserHearted: hearted
+                    currentUserHearted: heartedCommentIDs.contains(commentID)
                 ))
             }
             return comments

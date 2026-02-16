@@ -15,9 +15,11 @@ struct ErgScan1App: App {
     @StateObject private var socialService = SocialService()
     @StateObject private var teamService = TeamService()
     @StateObject private var assignmentService = AssignmentService()
+    @StateObject private var cacheService = SocialCacheService()
 
     var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
+        // Schema 1: Personal data — syncs to CloudKit private DB
+        let personalSchema = Schema([
             User.self,
             Workout.self,
             Interval.self,
@@ -27,35 +29,71 @@ struct ErgScan1App: App {
             Goal.self,
         ])
 
-        // Try CloudKit first
+        // Schema 2: Social cache — strictly local, NEVER syncs to CloudKit
+        let cacheSchema = Schema([
+            CachedSharedWorkout.self,
+            CachedFriend.self,
+            CachedTeam.self,
+            CachedTeamMembership.self,
+            SyncMetadata.self,
+        ])
+
+        // Combined schema (union of both)
+        let fullSchema = Schema([
+            User.self,
+            Workout.self,
+            Interval.self,
+            BenchmarkWorkout.self,
+            BenchmarkInterval.self,
+            BenchmarkImage.self,
+            Goal.self,
+            CachedSharedWorkout.self,
+            CachedFriend.self,
+            CachedTeam.self,
+            CachedTeamMembership.self,
+            SyncMetadata.self,
+        ])
+
+        // Try CloudKit + local cache dual configuration
         do {
-            print("🔵 Attempting to create ModelContainer with CloudKit sync...")
+            print("🔵 Attempting to create ModelContainer with CloudKit sync + local cache...")
             print("   Container: iCloud.com.omomalley03.ErgScan1")
+
             let cloudKitConfig = ModelConfiguration(
-                schema: schema,
+                "PersonalData",
+                schema: personalSchema,
                 isStoredInMemoryOnly: false,
                 cloudKitDatabase: .private("iCloud.com.omomalley03.ErgScan1")
             )
-            let container = try ModelContainer(for: schema, configurations: [cloudKitConfig])
-            print("✅ SUCCESS: ModelContainer created with CloudKit sync enabled!")
-            print("   Your workouts WILL sync to iCloud")
+
+            let cacheConfig = ModelConfiguration(
+                "SocialCache",
+                schema: cacheSchema,
+                isStoredInMemoryOnly: false,
+                cloudKitDatabase: .none
+            )
+
+            let container = try ModelContainer(for: fullSchema, configurations: [cloudKitConfig, cacheConfig])
+            print("✅ SUCCESS: Dual ModelContainer created (CloudKit + local cache)")
             return container
         } catch {
-            print("❌ CLOUDKIT SYNC FAILED!")
-            print("   Error: \(error)")
-            print("   Error type: \(type(of: error))")
-            print("   Localized: \(error.localizedDescription)")
-            print("🔄 Falling back to local-only storage...")
-            print("⚠️  WARNING: Workouts will NOT sync to iCloud in this mode!")
+            print("❌ DUAL CONTAINER FAILED: \(error)")
+            print("🔄 Falling back to local-only storage for everything...")
 
-            // Fallback to local-only
+            // Fallback to local-only for all models
             do {
                 let localConfig = ModelConfiguration(
-                    schema: schema,
+                    schema: personalSchema,
                     isStoredInMemoryOnly: false,
                     cloudKitDatabase: .none
                 )
-                let container = try ModelContainer(for: schema, configurations: [localConfig])
+                let cacheConfig = ModelConfiguration(
+                    "SocialCache",
+                    schema: cacheSchema,
+                    isStoredInMemoryOnly: false,
+                    cloudKitDatabase: .none
+                )
+                let container = try ModelContainer(for: fullSchema, configurations: [localConfig, cacheConfig])
                 print("✅ ModelContainer created in LOCAL-ONLY mode (no sync)")
                 return container
             } catch {
@@ -75,6 +113,7 @@ struct ErgScan1App: App {
         .environmentObject(socialService)
         .environmentObject(teamService)
         .environmentObject(assignmentService)
+        .environmentObject(cacheService)
     }
 }
 
@@ -86,6 +125,7 @@ struct ContentViewWrapper: View {
     @EnvironmentObject var socialService: SocialService
     @EnvironmentObject var teamService: TeamService
     @EnvironmentObject var assignmentService: AssignmentService
+    @EnvironmentObject var cacheService: SocialCacheService
 
     var body: some View {
         Group {
@@ -96,18 +136,14 @@ struct ContentViewWrapper: View {
                         .environment(\.currentUser, user)
                         .environmentObject(themeViewModel)
                         .onAppear {
-                            socialService.setCurrentUser(user.appleUserID, context: modelContext)
-                            teamService.setCurrentUser(user.appleUserID, context: modelContext)
-                            assignmentService.setCurrentUser(userID: user.appleUserID, username: user.username ?? "")
+                            configureCacheAndServices(user: user)
                         }
                 } else {
                     OnboardingContainerView()
                         .environment(\.currentUser, user)
                         .environmentObject(themeViewModel)
                         .onAppear {
-                            socialService.setCurrentUser(user.appleUserID, context: modelContext)
-                            teamService.setCurrentUser(user.appleUserID, context: modelContext)
-                            assignmentService.setCurrentUser(userID: user.appleUserID, username: user.username ?? "")
+                            configureCacheAndServices(user: user)
                         }
                 }
             } else {
@@ -124,6 +160,20 @@ struct ContentViewWrapper: View {
                 await authService.authenticateWithSavedCredentials()
             }
         }
+    }
+
+    private func configureCacheAndServices(user: User) {
+        // Configure cache service with modelContext
+        cacheService.configure(context: modelContext, userID: user.appleUserID)
+
+        // Inject cache into services
+        socialService.cacheService = cacheService
+        teamService.cacheService = cacheService
+
+        // Set up services (will now load cache first, then background sync)
+        socialService.setCurrentUser(user.appleUserID, context: modelContext)
+        teamService.setCurrentUser(user.appleUserID, context: modelContext)
+        assignmentService.setCurrentUser(userID: user.appleUserID, username: user.username ?? "")
     }
 }
 
