@@ -21,7 +21,9 @@ struct EditableWorkoutForm: View {
     @State private var showDatePicker: Bool = false
     @State private var selectedZone: IntensityZone? = nil
     @State private var isErgTest: Bool = false
-    @State private var selectedPrivacy: WorkoutPrivacy = .friends
+    @State private var isPrivateOnly: Bool = false
+    @State private var shareWithFriends: Bool = true
+    @State private var shareWithTeams: Bool = false
     @State private var selectedTeams: Set<String> = []
 
     init(
@@ -51,6 +53,14 @@ struct EditableWorkoutForm: View {
     // Helper computed property to determine if heart rate column should be shown
     private var showHeartRate: Bool {
         table.averages?.heartRate != nil || table.rows.contains(where: { $0.heartRate != nil })
+    }
+
+    private var canSaveShareSelection: Bool {
+        guard scanOnBehalfOf == nil else { return true }
+        if isPrivateOnly { return true }
+        let hasAudience = shareWithFriends || shareWithTeams
+        let hasRequiredTeams = !shareWithTeams || !selectedTeams.isEmpty
+        return hasAudience && hasRequiredTeams
     }
 
     var body: some View {
@@ -194,26 +204,37 @@ struct EditableWorkoutForm: View {
                             .foregroundColor(.secondary)
 
                         HStack(spacing: 8) {
-                            ForEach(WorkoutPrivacy.allCases) { privacy in
-                                Button {
-                                    selectedPrivacy = privacy
-                                } label: {
-                                    VStack(spacing: 4) {
-                                        Image(systemName: privacy.icon)
-                                            .font(.title3)
-                                        Text(privacy.displayName)
-                                            .font(.caption2)
-                                    }
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(selectedPrivacy == privacy
-                                                  ? Color.blue.opacity(0.8)
-                                                  : Color.blue.opacity(0.15))
-                                    )
-                                    .foregroundColor(selectedPrivacy == privacy ? .white : .blue)
+                            shareToggleButton(
+                                title: "Private",
+                                icon: "lock.fill",
+                                isSelected: isPrivateOnly
+                            ) {
+                                isPrivateOnly.toggle()
+                                if isPrivateOnly {
+                                    shareWithFriends = false
+                                    shareWithTeams = false
+                                    selectedTeams.removeAll()
+                                } else {
+                                    shareWithFriends = true
                                 }
+                            }
+
+                            shareToggleButton(
+                                title: "Friends",
+                                icon: "person.2.fill",
+                                isSelected: shareWithFriends
+                            ) {
+                                if isPrivateOnly { isPrivateOnly = false }
+                                shareWithFriends.toggle()
+                            }
+
+                            shareToggleButton(
+                                title: "Team",
+                                icon: "person.3.fill",
+                                isSelected: shareWithTeams
+                            ) {
+                                if isPrivateOnly { isPrivateOnly = false }
+                                shareWithTeams.toggle()
                             }
                         }
                     }
@@ -221,7 +242,7 @@ struct EditableWorkoutForm: View {
                 }
 
                 // Show team selector if Team privacy is selected
-                if scanOnBehalfOf == nil && selectedPrivacy == .team && !teamService.myTeams.isEmpty {
+                if scanOnBehalfOf == nil && shareWithTeams && !teamService.myTeams.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Select teams")
                             .font(.caption)
@@ -353,10 +374,16 @@ struct EditableWorkoutForm: View {
                 if scanOnBehalfOf != nil {
                     // Coxswain scanning for rower - use rower's default or friends
                     privacyString = "friends"
-                } else if selectedPrivacy == .team && !selectedTeams.isEmpty {
+                } else if isPrivateOnly {
+                    privacyString = WorkoutPrivacy.privateOnly.rawValue
+                } else if shareWithFriends && shareWithTeams {
+                    privacyString = WorkoutPrivacy.friendsAndTeamPrivacy(teamIDs: Array(selectedTeams))
+                } else if shareWithTeams {
                     privacyString = WorkoutPrivacy.teamPrivacy(teamIDs: Array(selectedTeams))
+                } else if shareWithFriends {
+                    privacyString = WorkoutPrivacy.friends.rawValue
                 } else {
-                    privacyString = selectedPrivacy.rawValue
+                    privacyString = WorkoutPrivacy.privateOnly.rawValue
                 }
 
                 onSave(editedDate, selectedZone, isErgTest, privacyString)
@@ -371,6 +398,8 @@ struct EditableWorkoutForm: View {
                 .foregroundColor(.white)
                 .cornerRadius(12)
             }
+            .disabled(!canSaveShareSelection)
+            .opacity(canSaveShareSelection ? 1.0 : 0.5)
         }
         .padding()
         .background(Color(.systemBackground))
@@ -378,18 +407,23 @@ struct EditableWorkoutForm: View {
             // Load default privacy from user preferences
             if scanOnBehalfOf == nil {
                 if let privacyString = currentUser?.defaultPrivacy {
-                    if privacyString == "private" {
-                        selectedPrivacy = .privateOnly
-                    } else if privacyString == "friends" {
-                        selectedPrivacy = .friends
-                    } else if privacyString.hasPrefix("team") {
-                        selectedPrivacy = .team
-                        selectedTeams = Set(WorkoutPrivacy.parseTeamIDs(from: privacyString))
+                    isPrivateOnly = (privacyString == WorkoutPrivacy.privateOnly.rawValue)
+                    if isPrivateOnly {
+                        shareWithFriends = false
+                        shareWithTeams = false
+                        selectedTeams.removeAll()
                     } else {
-                        selectedPrivacy = .friends
+                        shareWithFriends = WorkoutPrivacy.includesFriends(privacyString)
+                        shareWithTeams = WorkoutPrivacy.includesTeam(privacyString)
+                        selectedTeams = Set(WorkoutPrivacy.parseTeamIDs(from: privacyString))
+                        if !shareWithFriends && !shareWithTeams {
+                            shareWithFriends = true
+                        }
                     }
                 } else {
-                    selectedPrivacy = .friends
+                    isPrivateOnly = false
+                    shareWithFriends = true
+                    shareWithTeams = false
                 }
 
                 // Load teams
@@ -397,6 +431,29 @@ struct EditableWorkoutForm: View {
                     await teamService.loadMyTeams()
                 }
             }
+        }
+    }
+
+    private func shareToggleButton(
+        title: String,
+        icon: String,
+        isSelected: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            VStack(spacing: 4) {
+                Image(systemName: icon)
+                    .font(.title3)
+                Text(title)
+                    .font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.blue.opacity(0.8) : Color.blue.opacity(0.15))
+            )
+            .foregroundColor(isSelected ? .white : .blue)
         }
     }
 }

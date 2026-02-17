@@ -71,12 +71,13 @@ struct ScannerView: View {
                                 customDate: editedDate,
                                 intensityZone: selectedZone,
                                 isErgTest: isErgTest,
+                                privacy: privacy,
                                 scanOnBehalfOfUserID: scanOnBehalfOf,
                                 scanOnBehalfOfUsername: scanOnBehalfOfUsername
                             ) {
                                 // Publish to social feed if user has username
                                 var sharedWorkoutID: String? = nil
-                                if let username = currentUser?.username, !username.isEmpty {
+                                if let username = currentUser?.username, !username.isEmpty, privacy != WorkoutPrivacy.privateOnly.rawValue {
                                     sharedWorkoutID = await socialService.publishWorkout(
                                         workoutType: savedWorkout.workoutType,
                                         date: savedWorkout.date,

@@ -138,9 +138,13 @@ struct PrivacySettingsView: View {
             // Parse the privacy string
             if privacyString == "private" {
                 selectedPrivacy = .privateOnly
-            } else if privacyString == "friends" {
+            } else if WorkoutPrivacy.includesFriends(privacyString) && WorkoutPrivacy.includesTeam(privacyString) {
+                // This screen supports a single default audience; prefer friends when both are present.
                 selectedPrivacy = .friends
-            } else if privacyString.hasPrefix("team") {
+                selectedTeams = Set(WorkoutPrivacy.parseTeamIDs(from: privacyString))
+            } else if WorkoutPrivacy.includesFriends(privacyString) {
+                selectedPrivacy = .friends
+            } else if WorkoutPrivacy.includesTeam(privacyString) {
                 selectedPrivacy = .team
                 // Parse team IDs if present
                 selectedTeams = Set(WorkoutPrivacy.parseTeamIDs(from: privacyString))

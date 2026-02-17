@@ -81,10 +81,17 @@ struct WorkoutListView: View {
     private func deleteWorkout(_ workout: Workout) {
         let workoutIDString = workout.id.uuidString
         Task {
-            if let deletedID = await socialService.deleteSharedWorkout(localWorkoutID: workoutIDString) {
+            if let deletedID = await socialService.deleteSharedWorkout(
+                localWorkoutID: workoutIDString,
+                sharedWorkoutRecordID: workout.sharedWorkoutRecordID
+            ) {
                 await MainActor.run {
                     teamService.removeFromTeamActivity(workoutID: deletedID)
                 }
+            }
+            await socialService.loadFriendActivity(forceRefresh: true)
+            if let teamID = teamService.selectedTeamID {
+                await teamService.loadTeamActivity(teamID: teamID, forceRefresh: true)
             }
         }
         modelContext.delete(workout)

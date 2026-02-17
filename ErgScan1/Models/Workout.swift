@@ -67,6 +67,7 @@ final class Workout {
 
     // Public sharing metadata (SharedWorkout in public database)
     var sharedWorkoutRecordID: String?  // Record ID in public database, nil if not yet published
+    var sharePrivacy: String?           // "private", "friends", "team:...", or "friends+team:..."
 
     init(
         date: Date,

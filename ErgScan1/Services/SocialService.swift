@@ -52,7 +52,7 @@ class SocialService: ObservableObject {
         let averageSplit: String
         let intensityZone: String
         let isErgTest: Bool
-        let privacy: String  // "private", "friends", "team", or "team:id1,id2"
+        let privacy: String  // "private", "friends", "team(:ids)", or "friends+team(:ids)"
         let submittedByCoxUsername: String?  // coxswain username if scanned on behalf
     }
 
@@ -728,39 +728,81 @@ class SocialService: ObservableObject {
     }
 
     @discardableResult
-    func deleteSharedWorkout(localWorkoutID: String) async -> String? {
+    func deleteSharedWorkout(localWorkoutID: String, sharedWorkoutRecordID: String? = nil) async -> String? {
         guard let userID = currentUserID else {
             print("⚠️ deleteSharedWorkout: no currentUserID")
             return nil
         }
-        var deletedRecordName: String?
+        var deletedRecordNames: Set<String> = []
+
+        func deleteAndCleanup(recordID: CKRecord.ID) async -> Bool {
+            do {
+                try await publicDB.deleteRecord(withID: recordID)
+                let recordName = recordID.recordName
+                deletedRecordNames.insert(recordName)
+                print("✅ Deleted SharedWorkout record: \(recordName)")
+
+                // Remove from in-memory activity
+                friendActivity.removeAll { $0.id == recordName }
+
+                // Remove from persisted feed caches (friend + all team sources)
+                cacheService?.removeCachedSharedWorkout(recordID: recordName)
+
+                // Delete orphaned chups/comments
+                await deleteAssociatedRecords(type: "WorkoutChup", workoutID: recordName)
+                await deleteAssociatedRecords(type: "WorkoutComment", workoutID: recordName)
+                return true
+            } catch let error as CKError where error.code == .unknownItem {
+                return false
+            } catch {
+                print("⚠️ Failed deleting SharedWorkout record \(recordID.recordName): \(error)")
+                return false
+            }
+        }
+
         do {
-            let predicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
-            let query = CKQuery(recordType: "SharedWorkout", predicate: predicate)
-            let (results, _) = try await publicDB.records(matching: query, resultsLimit: 1)
-            if results.isEmpty {
+            // 1) Fast path: if we know the record ID, delete directly.
+            if let sharedWorkoutRecordID = sharedWorkoutRecordID {
+                let ckID = CKRecord.ID(recordName: sharedWorkoutRecordID)
+                _ = await deleteAndCleanup(recordID: ckID)
+            }
+
+            // 2) Fallback: find by owner + localWorkoutID.
+            let ownedPredicate = NSPredicate(format: "ownerID == %@ AND localWorkoutID == %@", userID, localWorkoutID)
+            let ownedQuery = CKQuery(recordType: "SharedWorkout", predicate: ownedPredicate)
+            let (ownedResults, _) = try await publicDB.records(matching: ownedQuery, resultsLimit: 10)
+            for (recordID, result) in ownedResults {
+                guard case .success(_) = result else { continue }
+                _ = await deleteAndCleanup(recordID: recordID)
+            }
+
+            // 3) Final fallback: query by localWorkoutID only (covers legacy/mismatched owner records).
+            if deletedRecordNames.isEmpty {
+                let localPredicate = NSPredicate(format: "localWorkoutID == %@", localWorkoutID)
+                let localQuery = CKQuery(recordType: "SharedWorkout", predicate: localPredicate)
+                let (localResults, _) = try await publicDB.records(matching: localQuery, resultsLimit: 10)
+                for (recordID, result) in localResults {
+                    guard case .success(let record) = result else { continue }
+                    // Safety: only delete records owned by current user if owner is present.
+                    let ownerID = record["ownerID"] as? String
+                    if ownerID == nil || ownerID == userID {
+                        _ = await deleteAndCleanup(recordID: recordID)
+                    }
+                }
+            }
+
+            if deletedRecordNames.isEmpty {
                 print("ℹ️ deleteSharedWorkout: no SharedWorkout found for localWorkoutID=\(localWorkoutID)")
             }
-            for (recordID, result) in results {
-                guard case .success(_) = result else { continue }
-                try await publicDB.deleteRecord(withID: recordID)
-                deletedRecordName = recordID.recordName
-                print("✅ Deleted SharedWorkout record: \(recordID.recordName)")
 
-                // Remove from local friendActivity cache
-                friendActivity.removeAll { $0.id == recordID.recordName }
-
-                // Delete orphaned chups
-                await deleteAssociatedRecords(type: "WorkoutChup", workoutID: recordID.recordName)
-                // Delete orphaned comments
-                await deleteAssociatedRecords(type: "WorkoutComment", workoutID: recordID.recordName)
-            }
+            return deletedRecordNames.first
         } catch let error as CKError where error.code == .unknownItem {
             // SharedWorkout type doesn't exist yet — nothing to delete
+            return deletedRecordNames.first
         } catch {
             print("⚠️ Failed to delete SharedWorkout (localWorkoutID=\(localWorkoutID)): \(error)")
+            return deletedRecordNames.first
         }
-        return deletedRecordName
     }
 
     /// Delete all CloudKit records of a given type that reference a workoutID
@@ -953,6 +995,10 @@ class SocialService: ObservableObject {
             print("📤 Publishing \(unpublishedWorkouts.count) new workouts...")
 
             for workout in unpublishedWorkouts {
+                let privacy = workout.sharePrivacy ?? WorkoutPrivacy.friends.rawValue
+                if privacy == WorkoutPrivacy.privateOnly.rawValue {
+                    continue
+                }
                 if let recordID = await publishWorkout(
                     workoutType: workout.workoutType,
                     date: workout.date,
@@ -961,7 +1007,8 @@ class SocialService: ObservableObject {
                     averageSplit: workout.averageSplit ?? "",
                     intensityZone: workout.intensityZone ?? "",
                     isErgTest: workout.isErgTest,
-                    localWorkoutID: workout.id.uuidString
+                    localWorkoutID: workout.id.uuidString,
+                    privacy: privacy
                 ) {
                     // Mark workout as published
                     workout.sharedWorkoutRecordID = recordID
@@ -1024,6 +1071,8 @@ class SocialService: ObservableObject {
 
             var allWorkouts: [SharedWorkoutResult] = []
             for record in page.records {
+                let privacyString = record["privacy"] as? String ?? WorkoutPrivacy.friends.rawValue
+                guard WorkoutPrivacy.includesFriends(privacyString) else { continue }
                 let ownerID = record["ownerID"] as? String ?? ""
                 let info = displayInfoMap[ownerID] ?? (username: "", displayName: "")
                 allWorkouts.append(sharedWorkoutResult(
@@ -1071,6 +1120,8 @@ class SocialService: ObservableObject {
 
             var newWorkouts: [SharedWorkoutResult] = []
             for record in page.records {
+                let privacyString = record["privacy"] as? String ?? WorkoutPrivacy.friends.rawValue
+                guard WorkoutPrivacy.includesFriends(privacyString) else { continue }
                 let ownerID = record["ownerID"] as? String ?? ""
                 let info = displayInfoMap[ownerID] ?? (username: "", displayName: "")
                 newWorkouts.append(sharedWorkoutResult(
@@ -1404,6 +1455,10 @@ class SocialService: ObservableObject {
 
             return results.compactMap { recordID, result in
                 guard case .success(let record) = result else { return nil }
+                let privacyString = record["privacy"] as? String ?? WorkoutPrivacy.friends.rawValue
+                guard WorkoutPrivacy.includesFriends(privacyString) || WorkoutPrivacy.includesTeam(privacyString) else {
+                    return nil
+                }
                 return SharedWorkoutResult(
                     id: recordID.recordName,
                     ownerID: record["ownerID"] as? String ?? userID,
@@ -1416,7 +1471,7 @@ class SocialService: ObservableObject {
                     averageSplit: record["averageSplit"] as? String ?? "",
                     intensityZone: record["intensityZone"] as? String ?? "",
                     isErgTest: (record["isErgTest"] as? NSNumber)?.intValue == 1,
-                    privacy: record["privacy"] as? String ?? "friends",
+                    privacy: privacyString,
                     submittedByCoxUsername: record["submittedByCoxUsername"] as? String
                 )
             }

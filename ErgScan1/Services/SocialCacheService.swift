@@ -368,6 +368,19 @@ class SocialCacheService: ObservableObject {
         try? context.save()
     }
 
+    func removeCachedSharedWorkout(recordID: String) {
+        guard let context = modelContext else { return }
+        let descriptor = FetchDescriptor<CachedSharedWorkout>(
+            predicate: #Predicate { $0.recordID == recordID }
+        )
+        if let existing = try? context.fetch(descriptor) {
+            for cached in existing {
+                context.delete(cached)
+            }
+            try? context.save()
+        }
+    }
+
     // MARK: - Image File Helpers
 
     nonisolated private static var cacheDirectory: URL {

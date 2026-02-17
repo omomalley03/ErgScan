@@ -260,9 +260,11 @@ struct SettingsView: View {
     private func privacyDisplayText(_ privacyString: String) -> String {
         if privacyString == "private" {
             return "Private"
-        } else if privacyString == "friends" {
+        } else if WorkoutPrivacy.includesFriends(privacyString) && WorkoutPrivacy.includesTeam(privacyString) {
+            return "Friends + Team"
+        } else if WorkoutPrivacy.includesFriends(privacyString) {
             return "Friends"
-        } else if privacyString.hasPrefix("team") {
+        } else if WorkoutPrivacy.includesTeam(privacyString) {
             return "Team"
         } else {
             return "Friends"

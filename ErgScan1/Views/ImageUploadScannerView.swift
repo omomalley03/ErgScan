@@ -512,6 +512,7 @@ struct ImageUploadScannerView: View {
         workout.user = currentUser
         workout.userID = currentUser.appleUserID
         workout.syncedToCloud = true
+        workout.sharePrivacy = privacy
 
         modelContext.insert(workout)
 
@@ -557,7 +558,7 @@ struct ImageUploadScannerView: View {
             try modelContext.save()
 
             // Publish to social feed
-            if let username = currentUser.username, !username.isEmpty {
+            if let username = currentUser.username, !username.isEmpty, privacy != WorkoutPrivacy.privateOnly.rawValue {
                 let recordID = await socialService.publishWorkout(
                     workoutType: workout.workoutType,
                     date: workout.date,

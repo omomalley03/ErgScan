@@ -112,16 +112,22 @@ struct EditWorkoutView: View {
             // Publish to friends if user has a username
             if let username = currentUser?.username, !username.isEmpty {
                 Task {
-                    let recordID = await socialService.publishWorkout(
-                        workoutType: workout.workoutType,
-                        date: workout.date,
-                        totalTime: workout.totalTime,
-                        totalDistance: workout.totalDistance ?? 0,
-                        averageSplit: workout.averageSplit ?? "",
-                        intensityZone: workout.intensityZone ?? "",
-                        isErgTest: workout.isErgTest,
-                        localWorkoutID: workout.id.uuidString
-                    )
+                    let recordID: String?
+                    if workout.sharePrivacy == WorkoutPrivacy.privateOnly.rawValue {
+                        recordID = nil
+                    } else {
+                        recordID = await socialService.publishWorkout(
+                            workoutType: workout.workoutType,
+                            date: workout.date,
+                            totalTime: workout.totalTime,
+                            totalDistance: workout.totalDistance ?? 0,
+                            averageSplit: workout.averageSplit ?? "",
+                            intensityZone: workout.intensityZone ?? "",
+                            isErgTest: workout.isErgTest,
+                            localWorkoutID: workout.id.uuidString,
+                            privacy: workout.sharePrivacy ?? WorkoutPrivacy.friends.rawValue
+                        )
+                    }
 
                     // Mark workout as published
                     if let recordID = recordID {

@@ -41,12 +41,54 @@ enum WorkoutPrivacy: String, CaseIterable, Identifiable, Codable {
         return "team:" + teamIDs.joined(separator: ",")
     }
 
+    /// Creates a privacy string for sharing with both friends and team(s)
+    /// - Parameter teamIDs: Array of team IDs to share with
+    /// - Returns: "friends+team" or "friends+team:teamID1,teamID2"
+    static func friendsAndTeamPrivacy(teamIDs: [String]) -> String {
+        guard !teamIDs.isEmpty else { return "friends+team" }
+        return "friends+team:" + teamIDs.joined(separator: ",")
+    }
+
+    /// True if privacy includes the friends audience.
+    static func includesFriends(_ privacyString: String) -> Bool {
+        let normalized = privacyString.lowercased()
+        return normalized == WorkoutPrivacy.friends.rawValue || normalized.hasPrefix("friends+team")
+    }
+
+    /// True if privacy includes the team audience.
+    static func includesTeam(_ privacyString: String) -> Bool {
+        let normalized = privacyString.lowercased()
+        return normalized == WorkoutPrivacy.team.rawValue
+            || normalized.hasPrefix("team:")
+            || normalized.hasPrefix("friends+team")
+    }
+
+    /// True if privacy targets a specific team (or generic team visibility).
+    static func includesTeam(_ privacyString: String, teamID: String) -> Bool {
+        let normalized = privacyString.lowercased()
+        if normalized == WorkoutPrivacy.team.rawValue || normalized == "friends+team" {
+            return true
+        }
+        let teamIDs = parseTeamIDs(from: privacyString)
+        if teamIDs.isEmpty {
+            return includesTeam(privacyString)
+        }
+        return teamIDs.contains(teamID)
+    }
+
     /// Parses team IDs from a privacy string
     /// - Parameter privacyString: The privacy value from CloudKit
     /// - Returns: Array of team IDs, or empty if not team-specific
     static func parseTeamIDs(from privacyString: String) -> [String] {
-        guard privacyString.hasPrefix("team:") else { return [] }
-        let idsString = String(privacyString.dropFirst(5)) // Remove "team:" prefix
+        let lowercased = privacyString.lowercased()
+        let idsString: String
+        if lowercased.hasPrefix("team:") {
+            idsString = String(privacyString.dropFirst(5)) // Remove "team:" prefix
+        } else if lowercased.hasPrefix("friends+team:") {
+            idsString = String(privacyString.dropFirst(13)) // Remove "friends+team:" prefix
+        } else {
+            return []
+        }
         return idsString.split(separator: ",").map { String($0) }
     }
 
@@ -70,18 +112,21 @@ enum WorkoutPrivacy: String, CaseIterable, Identifiable, Codable {
         // Parse privacy
         if privacyString == "private" {
             return false
-        } else if privacyString == "friends" {
-            return friendIDs.contains(ownerID)
-        } else if privacyString == "team" {
-            // Generic team — access if user shares any team with owner
-            return !userTeamIDs.isEmpty
-        } else if privacyString.hasPrefix("team:") {
-            // Specific teams
-            let allowedTeamIDs = parseTeamIDs(from: privacyString)
-            return !Set(allowedTeamIDs).intersection(userTeamIDs).isEmpty
         }
 
-        // Default deny
-        return false
+        let friendAllowed = includesFriends(privacyString) && friendIDs.contains(ownerID)
+
+        var teamAllowed = false
+        if includesTeam(privacyString) {
+            let allowedTeamIDs = parseTeamIDs(from: privacyString)
+            if allowedTeamIDs.isEmpty {
+                // Generic team visibility
+                teamAllowed = !userTeamIDs.isEmpty
+            } else {
+                teamAllowed = !Set(allowedTeamIDs).intersection(userTeamIDs).isEmpty
+            }
+        }
+
+        return friendAllowed || teamAllowed
     }
 }

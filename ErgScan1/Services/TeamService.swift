@@ -488,11 +488,13 @@ class TeamService: ObservableObject {
             let workoutPredicate = NSPredicate(format: "ownerID IN %@", memberIDs)
             let workoutQuery = CKQuery(recordType: "SharedWorkout", predicate: workoutPredicate)
             workoutQuery.sortDescriptors = [NSSortDescriptor(key: "workoutDate", ascending: false)]
-            let (workoutResults, _) = try await publicDB.records(matching: workoutQuery, resultsLimit: 20)
+            let (workoutResults, _) = try await publicDB.records(matching: workoutQuery, resultsLimit: 100)
 
             var allWorkouts: [SocialService.SharedWorkoutResult] = []
             for (_, result) in workoutResults {
                 guard case .success(let record) = result else { continue }
+                let privacyString = record["privacy"] as? String ?? WorkoutPrivacy.friends.rawValue
+                guard WorkoutPrivacy.includesTeam(privacyString, teamID: teamID) else { continue }
                 allWorkouts.append(parseSharedWorkoutRecord(record))
             }
 

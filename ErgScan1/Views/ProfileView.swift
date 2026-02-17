@@ -64,8 +64,8 @@ struct ProfileView: View {
                     // Quick Stats
                     HStack(spacing: 20) {
                         ProfileStatBox(label: "Workouts", value: "\(workoutCount)")
-                        ProfileStatBox(label: "This Week", value: "0")
-                        ProfileStatBox(label: "Total Time", value: "0h")
+                        // ProfileStatBox(label: "This Week", value: "0")
+                        // ProfileStatBox(label: "Total Time", value: "0h")
                     }
                     .padding(.horizontal)
 

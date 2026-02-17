@@ -466,7 +466,15 @@ class ScannerViewModel: ObservableObject {
 
     // MARK: - Save Workout
 
-    func saveWorkout(context: ModelContext, customDate: Date? = nil, intensityZone: IntensityZone? = nil, isErgTest: Bool = false, scanOnBehalfOfUserID: String? = nil, scanOnBehalfOfUsername: String? = nil) async -> Workout? {
+    func saveWorkout(
+        context: ModelContext,
+        customDate: Date? = nil,
+        intensityZone: IntensityZone? = nil,
+        isErgTest: Bool = false,
+        privacy: String = WorkoutPrivacy.friends.rawValue,
+        scanOnBehalfOfUserID: String? = nil,
+        scanOnBehalfOfUsername: String? = nil
+    ) async -> Workout? {
         guard case .locked(let table) = state else { return nil }
 
         // Require authenticated user
@@ -502,6 +510,7 @@ class ScannerViewModel: ObservableObject {
         workout.user = currentUser
         workout.userID = currentUser.appleUserID
         workout.syncedToCloud = true
+        workout.sharePrivacy = privacy
 
         // Mark if scanned on behalf of another rower
         workout.scannedForUserID = scanOnBehalfOfUserID

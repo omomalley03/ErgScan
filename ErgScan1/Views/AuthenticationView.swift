@@ -15,11 +15,11 @@ struct AuthenticationView: View {
                 .frame(width: 80, height: 80)
                 .foregroundColor(.blue)
 
-            Text("ErgScan")
+            Text("Argo")
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
-            Text("Track your rowing workouts across all your devices")
+            Text("Scan your erg screens, track your workouts, and connect with teammates.")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)

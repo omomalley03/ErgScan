@@ -13,11 +13,11 @@ struct OnboardingWelcomeView: View {
                 .frame(width: 80, height: 80)
                 .foregroundColor(.blue)
 
-            Text("Welcome to ErgScan")
+            Text("Welcome to Argo")
                 .font(.largeTitle)
                 .fontWeight(.bold)
 
-            Text("Track your rowing workouts, connect with teammates, and see your progress over time.")
+            Text("Scan your workouts, connect with teammates, and track your progress over time.")
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
