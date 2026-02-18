@@ -25,6 +25,7 @@ struct UnifiedWorkoutDetailView: View {
     @State private var showChupList = false
     @State private var newCommentText = ""
     @State private var fetchedDetail: SocialService.WorkoutDetailResult?
+    private let sectionSpacing: CGFloat = 16
 
     // Convenience init for own workout (from Log)
     init(localWorkout: Workout, currentUserID: String) {
@@ -114,7 +115,7 @@ struct UnifiedWorkoutDetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 20) {
+            VStack(spacing: sectionSpacing) {
                 // 1. Friend identity header
                 if !isOwnWorkout {
                     friendIdentityHeader
@@ -140,7 +141,7 @@ struct UnifiedWorkoutDetailView: View {
                 }
             }
             .padding()
-            // .padding(.bottom, 80)
+            .padding(.bottom, 80)
         }
         .overlay {
             BigChupOverlay(isShowing: $isBigChup)
@@ -449,7 +450,8 @@ struct UnifiedWorkoutDetailView: View {
                 }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.secondarySystemBackground))
@@ -506,7 +508,7 @@ struct UnifiedWorkoutDetailView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 450)
+        .frame(height: 250)
         .onChange(of: currentIntervalIndex) { _, _ in
             HapticService.shared.lightImpact()
         }
@@ -527,7 +529,7 @@ struct UnifiedWorkoutDetailView: View {
             }
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .frame(height: 450)
+        .frame(height: 250)
         .onChange(of: currentIntervalIndex) { _, _ in
             HapticService.shared.lightImpact()
         }
@@ -588,7 +590,7 @@ struct UnifiedWorkoutDetailView: View {
                 .disabled(newCommentText.trimmingCharacters(in: .whitespaces).isEmpty)
             }
         }
-        .padding()
+        .padding(12)
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color(.systemBackground))
