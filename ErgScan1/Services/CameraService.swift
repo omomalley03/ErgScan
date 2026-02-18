@@ -2,6 +2,7 @@ import Foundation
 import Combine
 import AVFoundation
 import UIKit
+import CoreImage
 
 typealias FrameHandler = (CVPixelBuffer) -> Void
 
@@ -18,13 +19,13 @@ final class CameraService: NSObject, ObservableObject {
     // MARK: - Private Properties
 
     private let captureSession = AVCaptureSession()
-    private var photoOutput: AVCapturePhotoOutput?
-    private var photoContinuation: CheckedContinuation<UIImage?, Never>?
 
-    // Video output for continuous frame capture
+    // Video output for frame buffering
     private var videoOutput: AVCaptureVideoDataOutput?
     private let videoDataQueue = DispatchQueue(label: "com.ergscan.videodata", qos: .userInitiated)
     private var frameHandler: FrameHandler?
+    nonisolated(unsafe) private var latestFrameBuffer: CVPixelBuffer?
+    private let bufferLock = NSLock()
 
     lazy var previewLayer: AVCaptureVideoPreviewLayer = {
         let layer = AVCaptureVideoPreviewLayer(session: captureSession)
@@ -112,20 +113,31 @@ final class CameraService: NSObject, ObservableObject {
         }
         camera.unlockForConfiguration()
 
-        // Remove existing outputs (except video output which is managed separately)
+        // Remove existing outputs
         for output in captureSession.outputs {
-            if !(output is AVCaptureVideoDataOutput) {
-                captureSession.removeOutput(output)
-            }
+            captureSession.removeOutput(output)
         }
 
-        // Create photo output
-        let output = AVCapturePhotoOutput()
+        // Create video data output for frame buffering
+        let output = AVCaptureVideoDataOutput()
+        output.videoSettings = [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+        ]
+        output.alwaysDiscardsLateVideoFrames = true
+        output.setSampleBufferDelegate(self, queue: videoDataQueue)
+
         guard captureSession.canAddOutput(output) else {
             throw CameraError.cannotAddOutput
         }
         captureSession.addOutput(output)
-        photoOutput = output
+        videoOutput = output
+
+        // Configure connection for portrait orientation
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoOrientationSupported {
+                connection.videoOrientation = .portrait
+            }
+        }
 
         captureSession.commitConfiguration()
         isConfigured = true
@@ -151,110 +163,38 @@ final class CameraService: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Continuous Frame Capture
-
-    /// Setup continuous video frame capture for real-time OCR
-    func setupContinuousCapture(frameHandler: @escaping FrameHandler) async throws {
-        self.frameHandler = frameHandler
-
-        captureSession.beginConfiguration()
-
-        // Create video data output
-        let output = AVCaptureVideoDataOutput()
-        output.videoSettings = [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-        ]
-        output.alwaysDiscardsLateVideoFrames = true
-        output.setSampleBufferDelegate(self, queue: videoDataQueue)
-
-        guard captureSession.canAddOutput(output) else {
-            captureSession.commitConfiguration()
-            throw CameraError.cannotAddOutput
-        }
-
-        captureSession.addOutput(output)
-        videoOutput = output
-
-        // Configure connection for portrait orientation
-        if let connection = output.connection(with: .video) {
-            if connection.isVideoOrientationSupported {
-                connection.videoOrientation = .portrait
-            }
-        }
-
-        captureSession.commitConfiguration()
-    }
-
-    /// Stop continuous frame capture
-    func stopContinuousCapture() {
-        if let videoOutput = videoOutput {
-            captureSession.removeOutput(videoOutput)
-            self.videoOutput = nil
-        }
-        frameHandler = nil
-    }
-
     // MARK: - Photo Capture
 
     func capturePhoto() async -> UIImage? {
-        guard let photoOutput = photoOutput else { return nil }
+        // Small delay to ensure we have a fresh frame
+        try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
 
-        // Configure audio session to suppress shutter sound
-        configureSilentAudioSession()
+        // Get buffered frame (thread-safe)
+        bufferLock.lock()
+        let pixelBuffer = latestFrameBuffer
+        bufferLock.unlock()
 
-        return await withCheckedContinuation { continuation in
-            self.photoContinuation = continuation
-
-            let settings = AVCapturePhotoSettings()
-            settings.flashMode = .off
-            photoOutput.capturePhoto(with: settings, delegate: self)
+        guard let pixelBuffer = pixelBuffer else {
+            print("⚠️ No frame buffered yet")
+            return nil
         }
+
+        // Convert CVPixelBuffer to UIImage
+        return convertPixelBufferToUIImage(pixelBuffer)
     }
 
-    // MARK: - Silent Capture
+    private func convertPixelBufferToUIImage(_ pixelBuffer: CVPixelBuffer) -> UIImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        let context = CIContext()
 
-    private func configureSilentAudioSession() {
-        do {
-            let audioSession = AVAudioSession.sharedInstance()
-            // Set category to .ambient to make system sounds respect the mute switch
-            try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
-            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
-        } catch {
-            print("⚠️ Failed to configure silent audio session: \(error)")
+        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {
+            print("⚠️ Failed to convert CVPixelBuffer to CGImage")
+            return nil
         }
-    }
-}
 
-// MARK: - AVCapturePhotoCaptureDelegate
-
-extension CameraService: AVCapturePhotoCaptureDelegate {
-
-    nonisolated func photoOutput(
-        _ output: AVCapturePhotoOutput,
-        didFinishProcessingPhoto photo: AVCapturePhoto,
-        error: Error?
-    ) {
-        Task { @MainActor in
-            guard let continuation = photoContinuation else { return }
-            photoContinuation = nil
-
-            if let error = error {
-                print("Photo capture error: \(error.localizedDescription)")
-                continuation.resume(returning: nil)
-                return
-            }
-
-            guard let imageData = photo.fileDataRepresentation(),
-                  let image = UIImage(data: imageData) else {
-                continuation.resume(returning: nil)
-                return
-            }
-
-            continuation.resume(returning: image)
-        }
+        return UIImage(cgImage: cgImage, scale: 1.0, orientation: .up)
     }
 }
-
 // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
 
 extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
@@ -268,8 +208,15 @@ extension CameraService: AVCaptureVideoDataOutputSampleBufferDelegate {
             return
         }
 
-        Task { @MainActor in
-            frameHandler?(pixelBuffer)
+        // Store latest frame in thread-safe buffer
+        bufferLock.lock()
+        latestFrameBuffer = pixelBuffer
+        bufferLock.unlock()
+
+        // Also forward to frameHandler if set (for future continuous OCR feature)
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            self.frameHandler?(pixelBuffer)
         }
     }
 }

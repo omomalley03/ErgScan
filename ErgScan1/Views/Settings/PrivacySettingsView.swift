@@ -4,6 +4,7 @@ import SwiftData
 struct PrivacySettingsView: View {
     @Environment(\.currentUser) private var currentUser
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject var teamService: TeamService
 
     @State private var selectedPrivacy: WorkoutPrivacy = .friends
@@ -176,6 +177,7 @@ struct PrivacySettingsView: View {
         do {
             try modelContext.save()
             isSaving = false
+            dismiss()
         } catch {
             print("Failed to save privacy settings: \(error)")
             isSaving = false

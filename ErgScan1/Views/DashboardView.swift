@@ -239,15 +239,15 @@ struct DashboardView: View {
                     hasMoreActivity = true
                     await socialService.loadFriendActivity(forceRefresh: true)
                 }
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button {
-                            showSearch = true
-                        } label: {
-                            Image(systemName: "magnifyingglass")
-                        }
-                    }
-                }
+                // .toolbar {
+                //     ToolbarItem(placement: .navigationBarLeading) {
+                //         Button {
+                //             showSearch = true
+                //         } label: {
+                //             Image(systemName: "magnifyingglass")
+                //         }
+                //     }
+                // }
                 .navigationDestination(item: $selectedFeedWorkout) { workout in
                     UnifiedWorkoutDetailView(sharedWorkout: workout, currentUserID: myUserID)
                 }

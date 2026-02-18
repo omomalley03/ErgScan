@@ -33,7 +33,7 @@ struct MainTabView: View {
                         }
                     })
                 case .log:
-                    LogView(showSearch: $showSearch, highlightDate: $logHighlightDate)
+                    LogView(highlightDate: $logHighlightDate)
                 case .add:
                     EmptyView()  // Never shown (center button doesn't navigate)
                 case .teams:

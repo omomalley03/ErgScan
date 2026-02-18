@@ -9,19 +9,104 @@ import SwiftUI
 import SwiftData
 
 struct LogView: View {
+    private enum WorkoutTypeFilter: String, CaseIterable, Identifiable {
+        case all = "All"
+        case interval = "Intervals"
+        case singleTime = "Single Time"
+        case singleDistance = "Single Distance"
+
+        var id: String { rawValue }
+    }
+
+    private static let searchDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        return formatter
+    }()
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.currentUser) private var currentUser
     @EnvironmentObject var socialService: SocialService
     @EnvironmentObject var teamService: TeamService
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
-    @Binding var showSearch: Bool
     @Binding var highlightDate: Date?
     @State private var highlightedIDs: Set<UUID> = []
+    @State private var searchText = ""
+    @State private var showFilterSheet = false
+    @State private var zoneFilter: IntensityZone?
+    @State private var typeFilter: WorkoutTypeFilter = .all
+    @State private var isDateFilterEnabled = false
+    @State private var dateFilter = Date()
+    @State private var isErgTestOnly = false
 
     // Filter workouts by current user
     private var workouts: [Workout] {
         guard let currentUser = currentUser else { return [] }
         return allWorkouts.filter { $0.userID == currentUser.appleUserID && $0.scannedForUserID == nil }
+    }
+
+    private var filteredWorkouts: [Workout] {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let calendar = Calendar.current
+
+        return workouts.filter { workout in
+            if !query.isEmpty {
+                let dateText = Self.searchDateFormatter.string(from: workout.date).lowercased()
+                var tokens: [String] = [
+                    workout.workoutType,
+                    workout.workTime,
+                    workout.averageSplit ?? "",
+                    dateText
+                ]
+                if let distance = workout.totalDistance {
+                    tokens.append("\(distance)")
+                }
+                if let zone = workout.zone?.displayName {
+                    tokens.append(zone)
+                }
+                if workout.isErgTest {
+                    tokens.append("erg test")
+                    tokens.append("test")
+                }
+
+                let matchesSearch = tokens.joined(separator: " ").lowercased().contains(query)
+                if !matchesSearch { return false }
+            }
+
+            if let zoneFilter, workout.zone != zoneFilter {
+                return false
+            }
+
+            switch typeFilter {
+            case .all:
+                break
+            case .interval:
+                if workout.category != .interval { return false }
+            case .singleTime:
+                if workout.category != .single || isSingleDistance(workout) { return false }
+            case .singleDistance:
+                if workout.category != .single || !isSingleDistance(workout) { return false }
+            }
+
+            if isDateFilterEnabled && !calendar.isDate(workout.date, inSameDayAs: dateFilter) {
+                return false
+            }
+
+            if isErgTestOnly && !workout.isErgTest {
+                return false
+            }
+
+            return true
+        }
+    }
+
+    private var activeFilterCount: Int {
+        var count = 0
+        if zoneFilter != nil { count += 1 }
+        if typeFilter != .all { count += 1 }
+        if isDateFilterEnabled { count += 1 }
+        if isErgTestOnly { count += 1 }
+        return count
     }
 
     private var myUserID: String {
@@ -30,58 +115,65 @@ struct LogView: View {
 
     var body: some View {
         NavigationStack {
-            if workouts.isEmpty {
-                emptyState
-            } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(workouts) { workout in
-                                NavigationLink(destination: UnifiedWorkoutDetailView(
-                                    localWorkout: workout,
-                                    currentUserID: myUserID
-                                )) {
-                                    LogWorkoutCard(workout: workout)
-                                }
-                                .buttonStyle(.plain)
-                                .id(workout.id)
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        deleteWorkout(workout)
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
+            Group {
+                if workouts.isEmpty {
+                    emptyState
+                } else if filteredWorkouts.isEmpty {
+                    noResultsState
+                } else {
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            LazyVStack(spacing: 12) {
+                                ForEach(filteredWorkouts) { workout in
+                                    NavigationLink(destination: UnifiedWorkoutDetailView(
+                                        localWorkout: workout,
+                                        currentUserID: myUserID
+                                    )) {
+                                        LogWorkoutCard(workout: workout)
                                     }
+                                    .buttonStyle(.plain)
+                                    .id(workout.id)
+                                    .contextMenu {
+                                        Button(role: .destructive) {
+                                            deleteWorkout(workout)
+                                        } label: {
+                                            Label("Delete", systemImage: "trash")
+                                        }
+                                    }
+                                    .background(
+                                        highlightedIDs.contains(workout.id)
+                                            ? RoundedRectangle(cornerRadius: 12).fill(Color.blue.opacity(0.15))
+                                            : nil
+                                    )
                                 }
-                                .background(
-                                    highlightedIDs.contains(workout.id)
-                                        ? RoundedRectangle(cornerRadius: 12).fill(Color.blue.opacity(0.15))
-                                        : nil
-                                )
                             }
+                            .padding(.horizontal)
                         }
-                        .padding(.horizontal)
-                        
-                    }
-                    .navigationTitle("Log")
-                    .toolbar {
-                        ToolbarItem(placement: .navigationBarLeading) {
-                            Button {
-                                showSearch = true
-                            } label: {
-                                Image(systemName: "magnifyingglass")
-                            }
+                        .onAppear {
+                            processHighlight(proxy: proxy)
                         }
-                    }
-                    .onAppear {
-                        processHighlight(proxy: proxy)
-                    }
-                    .onChange(of: highlightDate) { _, _ in
-                        processHighlight(proxy: proxy)
-                    }
-                    .refreshable {
-                        await socialService.loadFriendActivity(forceRefresh: true)
+                        .onChange(of: highlightDate) { _, _ in
+                            processHighlight(proxy: proxy)
+                        }
+                        .refreshable {
+                            await socialService.loadFriendActivity(forceRefresh: true)
+                        }
                     }
                 }
+            }
+            .navigationTitle("Log")
+            .searchable(text: $searchText, prompt: "Search your workouts")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button {
+                        showFilterSheet = true
+                    } label: {
+                        Image(systemName: activeFilterCount > 0 ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+                    }
+                }
+            }
+            .sheet(isPresented: $showFilterSheet) {
+                filterSheet
             }
         }
     }
@@ -105,16 +197,28 @@ struct LogView: View {
                 .padding(.horizontal)
         }
         .padding()
-        .navigationTitle("Log")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button {
-                    showSearch = true
-                } label: {
-                    Image(systemName: "magnifyingglass")
+    }
+
+    private var noResultsState: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "line.3.horizontal.decrease.circle")
+                .font(.system(size: 44))
+                .foregroundColor(.secondary)
+            Text("No Matching Workouts")
+                .font(.headline)
+            Text("Try a different search or clear one or more filters.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            if !searchText.isEmpty || activeFilterCount > 0 {
+                Button("Clear Search & Filters") {
+                    clearAllFilters(includeSearch: true)
                 }
+                .buttonStyle(.bordered)
             }
         }
+        .padding()
     }
 
     // MARK: - Highlight
@@ -122,7 +226,7 @@ struct LogView: View {
     private func processHighlight(proxy: ScrollViewProxy) {
         guard let date = highlightDate else { return }
         let calendar = Calendar.current
-        let matching = workouts.filter { calendar.isDate($0.date, inSameDayAs: date) }
+        let matching = filteredWorkouts.filter { calendar.isDate($0.date, inSameDayAs: date) }
         guard let first = matching.first else {
             highlightDate = nil
             return
@@ -136,6 +240,75 @@ struct LogView: View {
                 highlightedIDs.removeAll()
             }
             highlightDate = nil
+        }
+    }
+
+    private func isSingleDistance(_ workout: Workout) -> Bool {
+        workout.workoutType
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .hasSuffix("m")
+    }
+
+    private func clearAllFilters(includeSearch: Bool = false) {
+        if includeSearch {
+            searchText = ""
+        }
+        zoneFilter = nil
+        typeFilter = .all
+        isDateFilterEnabled = false
+        isErgTestOnly = false
+    }
+
+    private var filterSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Zone") {
+                    Picker("Intensity Zone", selection: $zoneFilter) {
+                        Text("Any").tag(IntensityZone?.none)
+                        ForEach(IntensityZone.allCases, id: \.self) { zone in
+                            Text(zone.displayName).tag(IntensityZone?.some(zone))
+                        }
+                    }
+                }
+
+                Section("Workout Type") {
+                    Picker("Type", selection: $typeFilter) {
+                        ForEach(WorkoutTypeFilter.allCases) { filter in
+                            Text(filter.rawValue).tag(filter)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
+
+                Section("Date") {
+                    Toggle("Filter by date", isOn: $isDateFilterEnabled)
+                    if isDateFilterEnabled {
+                        DatePicker("Workout Date", selection: $dateFilter, displayedComponents: .date)
+                            .datePickerStyle(.graphical)
+                    }
+                }
+
+                Section("Flags") {
+                    Toggle("Erg Test only", isOn: $isErgTestOnly)
+                }
+
+                Section {
+                    Button("Clear All Filters") {
+                        clearAllFilters()
+                    }
+                    .disabled(activeFilterCount == 0)
+                }
+            }
+            .navigationTitle("Log Filters")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Done") {
+                        showFilterSheet = false
+                    }
+                }
+            }
         }
     }
 
