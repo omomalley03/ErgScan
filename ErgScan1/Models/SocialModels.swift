@@ -15,6 +15,31 @@ struct ChupInfo {
     var currentUserChupType: ChupType
 }
 
+extension ChupInfo {
+    mutating func applyCurrentUserTransition(to newType: ChupType) {
+        switch currentUserChupType {
+        case .regular:
+            regularCount = max(0, regularCount - 1)
+        case .big:
+            bigChupCount = max(0, bigChupCount - 1)
+        case .none:
+            break
+        }
+
+        switch newType {
+        case .regular:
+            regularCount += 1
+        case .big:
+            bigChupCount += 1
+        case .none:
+            break
+        }
+
+        currentUserChupType = newType
+        totalCount = regularCount + bigChupCount
+    }
+}
+
 struct ChupUser: Identifiable {
     let id: String  // userID
     let username: String

@@ -52,6 +52,7 @@ struct CommentsView: View {
                             Task {
                                 defer { isChupInProgress = false }
                                 let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                let previousChupInfo = chupInfo
                                 do {
                                     let newType = try await socialService.toggleChup(
                                         workoutID: workoutID,
@@ -59,14 +60,20 @@ struct CommentsView: View {
                                         username: myUsername,
                                         isBigChup: false
                                     )
-                                    // Refresh chup info from server
-                                    chupInfo = await socialService.fetchChups(for: workoutID)
+                                    await MainActor.run {
+                                        withAnimation(.easeInOut(duration: 0.15)) {
+                                            chupInfo.applyCurrentUserTransition(to: newType)
+                                        }
+                                    }
                                     if newType != .none {
                                         HapticService.shared.chupFeedback()
                                         withAnimation(.spring(response: 0.3)) { isChupAnimating = true }
                                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { isChupAnimating = false }
                                     }
                                 } catch {
+                                    await MainActor.run {
+                                        chupInfo = previousChupInfo
+                                    }
                                     print("⚠️ Chup failed: \(error)")
                                 }
                             }
@@ -100,16 +107,23 @@ struct CommentsView: View {
                                     Task {
                                         defer { isChupInProgress = false }
                                         let myUsername = socialService.myProfile?["username"] as? String ?? ""
+                                        let previousChupInfo = chupInfo
                                         do {
-                                            _ = try await socialService.toggleChup(
+                                            let newType = try await socialService.toggleChup(
                                                 workoutID: workoutID,
                                                 userID: currentUserID,
                                                 username: myUsername,
                                                 isBigChup: true
                                             )
-                                            // Refresh chup info from server
-                                            chupInfo = await socialService.fetchChups(for: workoutID)
+                                            await MainActor.run {
+                                                withAnimation(.easeInOut(duration: 0.15)) {
+                                                    chupInfo.applyCurrentUserTransition(to: newType)
+                                                }
+                                            }
                                         } catch {
+                                            await MainActor.run {
+                                                chupInfo = previousChupInfo
+                                            }
                                             print("⚠️ Big chup failed: \(error)")
                                         }
                                     }
