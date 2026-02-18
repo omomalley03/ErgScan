@@ -199,12 +199,28 @@ final class CameraService: NSObject, ObservableObject {
     func capturePhoto() async -> UIImage? {
         guard let photoOutput = photoOutput else { return nil }
 
+        // Configure audio session to suppress shutter sound
+        configureSilentAudioSession()
+
         return await withCheckedContinuation { continuation in
             self.photoContinuation = continuation
 
             let settings = AVCapturePhotoSettings()
             settings.flashMode = .off
             photoOutput.capturePhoto(with: settings, delegate: self)
+        }
+    }
+
+    // MARK: - Silent Capture
+
+    private func configureSilentAudioSession() {
+        do {
+            let audioSession = AVAudioSession.sharedInstance()
+            // Set category to .ambient to make system sounds respect the mute switch
+            try audioSession.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            try audioSession.setActive(true, options: .notifyOthersOnDeactivation)
+        } catch {
+            print("⚠️ Failed to configure silent audio session: \(error)")
         }
     }
 }

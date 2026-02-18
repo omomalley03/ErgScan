@@ -6,6 +6,7 @@ struct PowerCurveView: View {
     @Environment(\.currentUser) private var currentUser
     @Query(sort: \Workout.date, order: .reverse) private var allWorkouts: [Workout]
     @State private var viewModel = PowerCurveViewModel()
+    @State private var selectedWorkout: Workout?
 
     private var userWorkouts: [Workout] {
         guard let uid = currentUser?.appleUserID else { return [] }
@@ -24,6 +25,11 @@ struct PowerCurveView: View {
         }
         .navigationTitle("Power Curve")
         .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(item: $selectedWorkout) { workout in
+            if let userID = currentUser?.appleUserID {
+                UnifiedWorkoutDetailView(localWorkout: workout, currentUserID: userID)
+            }
+        }
         .onAppear {
             viewModel.loadCurve(workouts: userWorkouts)
         }
@@ -143,41 +149,54 @@ struct PowerCurveView: View {
 
     @ViewBuilder
     private func selectedPointDetail(_ point: PowerCurveService.PowerCurvePoint) -> some View {
-        HStack(spacing: 20) {
-            VStack(spacing: 4) {
-                Text("Duration")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text(PowerCurveService.formatDuration(point.durationSeconds))
-                    .font(.headline)
-                    .fontWeight(.bold)
+        Button {
+            // Find and navigate to the workout that set this PR
+            if let workout = allWorkouts.first(where: { $0.id == point.workoutID }) {
+                selectedWorkout = workout
             }
+        } label: {
+            HStack(spacing: 20) {
+                VStack(spacing: 4) {
+                    Text("Duration")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(PowerCurveService.formatDuration(point.durationSeconds))
+                        .font(.headline)
+                        .fontWeight(.bold)
+                }
 
-            VStack(spacing: 4) {
-                Text("Power")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                Text("\(Int(point.watts))W")
-                    .font(.headline)
-                    .fontWeight(.bold)
-                    .foregroundColor(.blue)
-            }
+                VStack(spacing: 4) {
+                    Text("Power")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text("\(Int(point.watts))W")
+                        .font(.headline)
+                        .fontWeight(.bold)
+                        .foregroundColor(.blue)
+                }
 
-            VStack(spacing: 4) {
-                Text("Split")
+                VStack(spacing: 4) {
+                    Text("Split")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                    Text(PowerCurveService.secondsToSplitString(point.splitSeconds))
+                        .font(.headline)
+                        .fontWeight(.bold)
+                }
+
+                // Indicator that it's tappable
+                Image(systemName: "chevron.right")
                     .font(.caption)
                     .foregroundColor(.secondary)
-                Text(PowerCurveService.secondsToSplitString(point.splitSeconds))
-                    .font(.headline)
-                    .fontWeight(.bold)
             }
+            .padding()
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(.secondarySystemBackground))
+            )
+            .padding(.horizontal)
         }
-        .padding()
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(Color(.secondarySystemBackground))
-        )
-        .padding(.horizontal)
+        .buttonStyle(.plain)
         .transition(.opacity.combined(with: .move(edge: .top)))
     }
 

@@ -771,14 +771,14 @@ struct IntervalCardView: View {
 
                 Spacer()
 
-                if isFastest {
-                    Image(systemName: "bolt.fill")
-                        .foregroundColor(.green)
-                }
-                if isSlowest {
-                    Image(systemName: "tortoise.fill")
-                        .foregroundColor(.red)
-                }
+                // if isFastest {
+                //     Image(systemName: "bolt.fill")
+                //         .foregroundColor(.green)
+                // }
+                // if isSlowest {
+                //     Image(systemName: "tortoise.fill")
+                //         .foregroundColor(.red)
+                // }
             }
 
             Divider()

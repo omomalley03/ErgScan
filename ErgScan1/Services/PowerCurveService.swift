@@ -13,6 +13,8 @@ class PowerCurveService {
         let id = UUID()
         let durationSeconds: Double
         let watts: Double
+        let workoutID: UUID
+        let workoutDate: Date
 
         var splitSeconds: Double {
             PowerCurveService.wattsToSplit(watts)
@@ -135,39 +137,47 @@ class PowerCurveService {
 
     // MARK: - Power Curve Building
 
-    static func isDominated(duration: Double, watts: Double, curve: [Double: Double]) -> Bool {
-        for (existingDuration, existingWatts) in curve {
-            if existingDuration >= duration && existingWatts >= watts {
+    typealias CurveEntry = (watts: Double, workoutID: UUID, workoutDate: Date)
+
+    static func isDominated(duration: Double, watts: Double, curve: [Double: CurveEntry]) -> Bool {
+        for (existingDuration, entry) in curve {
+            if existingDuration >= duration && entry.watts >= watts {
                 return true
             }
         }
         return false
     }
 
-    static func updatePowerCurve(duration: Double, watts: Double, curve: inout [Double: Double]) {
+    static func updatePowerCurve(
+        duration: Double,
+        watts: Double,
+        workoutID: UUID,
+        workoutDate: Date,
+        curve: inout [Double: CurveEntry]
+    ) {
         if isDominated(duration: duration, watts: watts, curve: curve) {
             return
         }
         let key = (duration * 100).rounded() / 100
         if let existing = curve[key] {
-            if watts > existing {
-                curve[key] = watts
+            if watts > existing.watts {
+                curve[key] = (watts, workoutID, workoutDate)
             }
         } else {
-            curve[key] = watts
+            curve[key] = (watts, workoutID, workoutDate)
         }
     }
 
-    static func enforceMonotonicity(_ curve: [Double: Double]) -> [Double: Double] {
+    static func enforceMonotonicity(_ curve: [Double: CurveEntry]) -> [Double: CurveEntry] {
         // Sort by duration descending (longest first)
         let sorted = curve.sorted { $0.key > $1.key }
-        var cleaned: [Double: Double] = [:]
+        var cleaned: [Double: CurveEntry] = [:]
         var maxPowerSoFar: Double = 0
 
-        for (duration, watts) in sorted {
-            if watts >= maxPowerSoFar {
-                cleaned[duration] = watts
-                maxPowerSoFar = watts
+        for (duration, entry) in sorted {
+            if entry.watts >= maxPowerSoFar {
+                cleaned[duration] = entry
+                maxPowerSoFar = entry.watts
             }
         }
 
@@ -177,7 +187,7 @@ class PowerCurveService {
     // MARK: - Main Entry Point
 
     static func rebuildPowerCurve(from workouts: [Workout]) -> [PowerCurvePoint] {
-        var curve: [Double: Double] = [:]
+        var curve: [Double: CurveEntry] = [:]
 
         for workout in workouts {
             let parsedSplits = parseSplits(from: workout)
@@ -190,7 +200,13 @@ class PowerCurveService {
                     guard split.distanceM > 0 else { continue }
                     let avgSplitSeconds = split.timeSeconds / split.distanceM * 500.0
                     let avgWatts = splitToWatts(avgSplitSeconds)
-                    updatePowerCurve(duration: split.timeSeconds, watts: avgWatts, curve: &curve)
+                    updatePowerCurve(
+                        duration: split.timeSeconds,
+                        watts: avgWatts,
+                        workoutID: workout.id,
+                        workoutDate: workout.date,
+                        curve: &curve
+                    )
                 }
             } else {
                 // Single piece — all contiguous blocks of splits
@@ -206,7 +222,13 @@ class PowerCurveService {
                         let avgSplitSeconds = totalTime / totalDistance * 500.0
                         let avgWatts = splitToWatts(avgSplitSeconds)
 
-                        updatePowerCurve(duration: totalTime, watts: avgWatts, curve: &curve)
+                        updatePowerCurve(
+                            duration: totalTime,
+                            watts: avgWatts,
+                            workoutID: workout.id,
+                            workoutDate: workout.date,
+                            curve: &curve
+                        )
                     }
                 }
             }
@@ -215,7 +237,45 @@ class PowerCurveService {
         let cleaned = enforceMonotonicity(curve)
         return cleaned
             .sorted { $0.key < $1.key }
-            .filter { $0.key >= 5 && $0.value > 0 && $0.value <= 1500 }
-            .map { PowerCurvePoint(durationSeconds: $0.key, watts: $0.value) }
+            .filter { $0.key >= 5 && $0.value.watts > 0 && $0.value.watts <= 1500 }
+            .map { PowerCurvePoint(
+                durationSeconds: $0.key,
+                watts: $0.value.watts,
+                workoutID: $0.value.workoutID,
+                workoutDate: $0.value.workoutDate
+            ) }
+    }
+
+    // MARK: - PR Detection
+
+    /// Detects which power curve PRs were set by a new workout
+    /// Returns array of durations (in seconds) where the workout set a new PR
+    static func detectPRs(newWorkout: Workout, existingWorkouts: [Workout]) -> [(duration: Double, watts: Double)] {
+        // Build curve without the new workout
+        let oldCurve = rebuildPowerCurve(from: existingWorkouts)
+        let oldCurveDict = Dictionary(uniqueKeysWithValues: oldCurve.map { ($0.durationSeconds, $0.watts) })
+
+        // Build curve with the new workout
+        let allWorkouts = existingWorkouts + [newWorkout]
+        let newCurve = rebuildPowerCurve(from: allWorkouts)
+
+        // Find durations where the new curve is better than the old curve
+        var prs: [(duration: Double, watts: Double)] = []
+        for point in newCurve {
+            // Check if this point is from the new workout
+            if point.workoutID == newWorkout.id {
+                // Check if it's a PR (better than old curve or new duration)
+                if let oldWatts = oldCurveDict[point.durationSeconds] {
+                    if point.watts > oldWatts {
+                        prs.append((point.durationSeconds, point.watts))
+                    }
+                } else {
+                    // New duration entirely
+                    prs.append((point.durationSeconds, point.watts))
+                }
+            }
+        }
+
+        return prs.sorted { $0.duration < $1.duration }
     }
 }

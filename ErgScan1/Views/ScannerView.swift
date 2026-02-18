@@ -21,6 +21,9 @@ struct ScannerView: View {
     let assignmentID: String?
     let assignmentTeamID: String?
 
+    @State private var showPRAlert = false
+    @State private var navigateToPowerCurve = false
+
     init(
         cameraService: CameraService,
         scanOnBehalfOf: String? = nil,
@@ -153,6 +156,28 @@ struct ScannerView: View {
             }
         } message: {
             Text(viewModel.errorMessage ?? "")
+        }
+        .onChange(of: viewModel.state) { oldState, newState in
+            // Show PR alert when transitioning to saved state if PRs were detected
+            if case .saved = newState, !viewModel.detectedPRs.isEmpty {
+                showPRAlert = true
+            }
+        }
+        .alert("Wattage PR!", isPresented: $showPRAlert) {
+            Button("View Power Curve") {
+                navigateToPowerCurve = true
+            }
+            Button("OK", role: .cancel) { }
+        } message: {
+            if viewModel.detectedPRs.count == 1 {
+                Text("You set a new power PR at \(PowerCurveService.formatDuration(viewModel.detectedPRs[0].duration)): \(Int(viewModel.detectedPRs[0].watts))W!")
+            } else {
+                let durations = viewModel.detectedPRs.map { PowerCurveService.formatDuration($0.duration) }.joined(separator: ", ")
+                Text("You set \(viewModel.detectedPRs.count) new power PRs at: \(durations)")
+            }
+        }
+        .navigationDestination(isPresented: $navigateToPowerCurve) {
+            PowerCurveView()
         }
     }
 

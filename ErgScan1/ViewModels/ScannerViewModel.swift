@@ -42,6 +42,7 @@ class ScannerViewModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var captureCount: Int = 0
     @Published var shouldValidateOnLoad: Bool = false  // Auto-validate in ManualDataEntryView when scan fails validation
+    @Published var detectedPRs: [(duration: Double, watts: Double)] = []
 
     // User for linking workouts to accounts
     @Published var currentUser: User?
@@ -560,6 +561,21 @@ class ScannerViewModel: ObservableObject {
         do {
             try context.save()
             print("✅ Workout saved successfully")
+
+            // Detect power curve PRs
+            let userID = currentUser.appleUserID
+            let userWorkouts = try context.fetch(FetchDescriptor<Workout>(
+                predicate: #Predicate<Workout> { w in w.userID == userID }
+            ))
+            let existingWorkouts = userWorkouts.filter { $0.id != workout.id }
+            let prs = PowerCurveService.detectPRs(newWorkout: workout, existingWorkouts: existingWorkouts)
+            detectedPRs = prs
+            if !prs.isEmpty {
+                print("🎉 Detected \(prs.count) power curve PRs!")
+                for pr in prs {
+                    print("   - \(PowerCurveService.formatDuration(pr.duration)): \(Int(pr.watts))W")
+                }
+            }
         } catch {
             print("❌ Error saving workout: \(error)")
         }

@@ -33,6 +33,9 @@ struct ImageUploadScannerView: View {
     @State private var shouldValidateOnLoad = false
     @State private var capturedImageData: Data?
     @State private var viewerSize: CGSize = .zero
+    @State private var detectedPRs: [(duration: Double, watts: Double)] = []
+    @State private var showPRAlert = false
+    @State private var navigateToPowerCurve = false
 
     // Services (no camera needed)
     private let visionService = VisionService()
@@ -102,6 +105,22 @@ struct ImageUploadScannerView: View {
             } message: {
                 Text(errorMessage ?? "")
             }
+            .alert("Wattage PR!", isPresented: $showPRAlert) {
+                Button("View Power Curve") {
+                    navigateToPowerCurve = true
+                }
+                Button("OK", role: .cancel) { }
+            } message: {
+                if detectedPRs.count == 1 {
+                    Text("You set a new power PR at \(PowerCurveService.formatDuration(detectedPRs[0].duration)): \(Int(detectedPRs[0].watts))W!")
+                } else {
+                    let durations = detectedPRs.map { PowerCurveService.formatDuration($0.duration) }.joined(separator: ", ")
+                    Text("You set \(detectedPRs.count) new power PRs at: \(durations)")
+                }
+            }
+            .navigationDestination(isPresented: $navigateToPowerCurve) {
+                PowerCurveView()
+            }
         }
     }
 
@@ -139,10 +158,36 @@ struct ImageUploadScannerView: View {
         }
         .onChange(of: selectedItem) { _, newItem in
             Task {
-                if let data = try? await newItem?.loadTransferable(type: Data.self),
-                   let image = UIImage(data: data) {
+                guard let newItem = newItem else { return }
+
+                do {
+                    isProcessing = true
+                    guard let data = try await newItem.loadTransferable(type: Data.self) else {
+                        errorMessage = "Could not load image data. Please try selecting a different photo."
+                        isProcessing = false
+                        return
+                    }
+
+                    guard let image = UIImage(data: data) else {
+                        errorMessage = "Could not create image from data. Please try a different photo."
+                        isProcessing = false
+                        return
+                    }
+
                     selectedImage = image
                     capturedImageData = image.jpegData(compressionQuality: 0.8)
+                    isProcessing = false
+                } catch {
+                    isProcessing = false
+
+                    // Check if it's an iCloud download issue
+                    let nsError = error as NSError
+                    if nsError.domain == "PHAssetExportRequestErrorDomain" ||
+                       nsError.domain == "CloudPhotoLibraryErrorDomain" {
+                        errorMessage = "This photo is stored in iCloud and couldn't be downloaded. Please ensure you have an internet connection and try again, or select a photo that's already on your device."
+                    } else {
+                        errorMessage = "Failed to load photo: \(error.localizedDescription)"
+                    }
                 }
             }
         }
@@ -557,6 +602,20 @@ struct ImageUploadScannerView: View {
         do {
             try modelContext.save()
 
+            // Detect PRs on the power curve
+            do {
+                let userID = currentUser.appleUserID
+                let userWorkouts = try modelContext.fetch(FetchDescriptor<Workout>(
+                    predicate: #Predicate<Workout> { w in w.userID == userID }
+                ))
+                let existingWorkouts = userWorkouts.filter { $0.id != workout.id }
+                let prs = PowerCurveService.detectPRs(newWorkout: workout, existingWorkouts: existingWorkouts)
+                detectedPRs = prs
+                print("🔥 Detected \(prs.count) PRs from upload")
+            } catch {
+                print("⚠️ Failed to detect PRs: \(error)")
+            }
+
             // Publish to social feed
             if let username = currentUser.username, !username.isEmpty, privacy != WorkoutPrivacy.privateOnly.rawValue {
                 let recordID = await socialService.publishWorkout(
@@ -578,7 +637,13 @@ struct ImageUploadScannerView: View {
                 }
             }
 
+            // Show PR alert after dismissing if PRs were detected
             dismiss()
+            if !detectedPRs.isEmpty {
+                // Small delay to allow dismiss animation to complete
+                try? await Task.sleep(nanoseconds: 300_000_000) // 0.3 seconds
+                showPRAlert = true
+            }
         } catch {
             errorMessage = "Failed to save workout: \(error.localizedDescription)"
         }
