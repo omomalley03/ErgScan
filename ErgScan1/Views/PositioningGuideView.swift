@@ -4,6 +4,8 @@ import SwiftUI
 /// Spans the full width of the frame, centered vertically.
 struct PositioningGuideView: View {
 
+    var hint: String = "Zoom in so erg LCD fills the square"
+
     var body: some View {
         GeometryReader { geometry in
             let side = geometry.size.width
@@ -29,7 +31,7 @@ struct PositioningGuideView: View {
 
                 // Instruction text above the guide
                 VStack {
-                    Text("Align Monitor Screen")
+                    Text(hint)
                         .font(.caption)
                         .fontWeight(.semibold)
                         .foregroundColor(.white)

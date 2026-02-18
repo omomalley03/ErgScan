@@ -241,7 +241,7 @@ struct ImageUploadScannerView: View {
                     } label: {
                         HStack {
                             Image(systemName: "doc.text.viewfinder")
-                            Text("Scan")
+                            Text("Scan (Zoom in first!)")
                         }
                         .font(.headline)
                         .frame(maxWidth: .infinity)

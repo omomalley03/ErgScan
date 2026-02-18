@@ -200,7 +200,7 @@ struct ScannerView: View {
 
                     switch viewModel.state {
                     case .ready, .capturing:
-                        PositioningGuideView()
+                        PositioningGuideView(hint: "Get close so erg LCD fills the square")
                     case .locked:
                         LockedGuideOverlay()
                     default:

@@ -166,7 +166,7 @@ struct DebugScannerView: View {
                         .foregroundColor(.white)
                 }
 
-                PositioningGuideView()
+                PositioningGuideView(hint: "Get close so erg LCD fills the square")
             }
             .frame(maxHeight: .infinity)
 
