@@ -203,18 +203,21 @@ class ScannerViewModel: ObservableObject {
             let ocrResults = try await visionService.recognizeText(in: croppedImage)
             print("✅ OCR found \(ocrResults.count) results")
 
-            // Convert to guide-relative coordinates (flip axes for portrait)
+            // Convert to guide-relative coordinates.
+            // Vision returns normalized coords with y=0 at the bottom (display-oriented
+            // because VisionService now passes the actual image orientation).
+            // Flip y to match UIKit's top-down convention used by the parser.
             let guideRelativeResults = ocrResults.map { result in
                 let box = result.boundingBox
-                let flippedBox = CGRect(
-                    x: box.origin.y,
-                    y: box.origin.x,
-                    width: box.height,
-                    height: box.width
+                let guideBox = CGRect(
+                    x: box.origin.x,
+                    y: 1 - box.origin.y - box.height,
+                    width: box.width,
+                    height: box.height
                 )
                 return GuideRelativeOCRResult(
                     original: result,
-                    guideRelativeBox: flippedBox
+                    guideRelativeBox: guideBox
                 )
             }
 

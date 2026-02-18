@@ -153,6 +153,24 @@ struct ProfileView: View {
                     .foregroundColor(.primary)
                     .padding(.horizontal)
 
+                    // Debug Scanner (developer tool)
+                    NavigationLink(destination: DebugScannerView()) {
+                        HStack {
+                            Image(systemName: "ladybug")
+                                .foregroundColor(.orange)
+                            Text("Debug Scanner")
+                                .font(.headline)
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .foregroundColor(.secondary)
+                        }
+                        .padding()
+                        .background(Color(.secondarySystemBackground))
+                        .cornerRadius(12)
+                    }
+                    .foregroundColor(.primary)
+                    .padding(.horizontal)
+
                     Spacer()
                 }
                 .padding(.bottom, 80)

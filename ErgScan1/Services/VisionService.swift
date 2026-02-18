@@ -74,7 +74,7 @@ actor VisionService {
 
         let requestHandler = VNImageRequestHandler(
             cgImage: cgImage,
-            orientation: .up,
+            orientation: CGImagePropertyOrientation(image.imageOrientation),
             options: [:]
         )
 
@@ -148,4 +148,24 @@ actor VisionService {
 enum VisionError: Error {
     case invalidImage
     case noResults
+}
+
+// MARK: - CGImagePropertyOrientation from UIImage.Orientation
+
+extension CGImagePropertyOrientation {
+    /// Convert UIImage.Orientation (UIKit) to CGImagePropertyOrientation (ImageIO / Vision).
+    /// The raw values differ between the two enums, so an explicit switch is required.
+    init(_ uiOrientation: UIImage.Orientation) {
+        switch uiOrientation {
+        case .up:            self = .up
+        case .upMirrored:    self = .upMirrored
+        case .down:          self = .down
+        case .downMirrored:  self = .downMirrored
+        case .left:          self = .left
+        case .leftMirrored:  self = .leftMirrored
+        case .right:         self = .right
+        case .rightMirrored: self = .rightMirrored
+        @unknown default:    self = .up
+        }
+    }
 }
